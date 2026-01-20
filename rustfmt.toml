@@ -1,0 +1,6 @@
+# rustfmt is worthless, it deletes every newline and makes code unreadable
+# So we disable it entirely. Use RustRover's formatting tools instead, or do it yourself. They make sense.
+disable_all_formatting = true
+#ignore = ["/"]
+tab_spaces = 2
+max_width = 150

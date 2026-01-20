@@ -1,0 +1,6 @@
+/target
+.venv
+*.dol
+*.elf
+prime-practice
+/.idea

@@ -1,200 +1,5 @@
-/*
-
-@dataclass
-class FSTEntry:
-    directory: bool
-    name: str
-    children: list = None
-    offset: int = None
-    length: int = None
-
-    def print(self, parents=[]):
-        # print("\t" * depth + f"{self.name} {(self.offset or 0):08x} {self.length}")
-        print(f"{'/'.join(parents + [self.name])} {(self.offset or 0):08X} {self.length}")
-        if self.children:
-            for child in self.children:
-                child.print(parents + [self.name])
-
-    def get_ranges(self):
-        ranges = []
-        if self.directory:
-            for child in self.children:
-                ranges += child.get_ranges()
-        else:
-            ranges.append((self.offset, self.offset + self.length))
-        ranges.sort(key=lambda a: a[0])
-        return ranges
-
-    def find(self, path: [str]):
-        head = path[0]
-        tail = path[1:]
-        if head != self.name:
-            return None
-        if self.directory:
-            for child in self.children:
-                found = child.find(tail)
-                if found:
-                    return found
-        else:
-            return self
-
-    def find_offset(self, offset: int):
-        if self.directory:
-            print("Searching in: " + self.name)
-            for child in self.children:
-                found = child.find_offset(offset)
-                if found:
-                    return found
-            return None
-        else:
-            print(f"Checking file: {self.name} @ {self.offset:08X}-{(self.offset + self.length):08X} for offset {offset:08X}")
-            if self.offset == offset:
-                return self
-            else:
-                return None
-
-    def count(self):
-        if self.directory:
-            count = 1
-            for child in self.children:
-                count += child.count()
-            return count
-        else:
-            return 1
-
-
-class FSTRecursiveWriter:
-    def __init__(self, fst):
-        self.fst = fst
-        self.file_offset = 0
-        self.string_offset = 0
-        self.str_table: DataWriter
-
-    def write(self, dest: DataWriter):
-        self.count = self.fst.count()
-        self.str_table = dest.with_offset(self.count * 0xC)
-        self.write_recursively(self.fst.root, dest, -1)
-        self.len = self.count * 0xC + self.string_offset
-
-    def write_recursively(self, entry: FSTEntry, dest: DataWriter, parent_index: int):
-        # Write name
-        name_offset = self.string_offset
-        self.str_table.write_string(name_offset, entry.name)
-        self.string_offset += len(entry.name) + 1
-
-        my_offset = self.file_offset
-        self.file_offset += 1
-
-        my_byte_offset = my_offset * 0xC
-
-        if entry.directory:
-            if parent_index < 0:
-                # root
-                dest.write_u32(my_byte_offset + 0x0, (0x01 << 24) | name_offset)
-                dest.write_u32(my_byte_offset + 0x4, 0)
-                dest.write_u32(my_byte_offset + 0x8, self.count)
-            else:
-                dest.write_u32(my_byte_offset + 0x0, (0x01 << 24) | name_offset)
-                dest.write_u32(my_byte_offset + 0x4, parent_index)
-                dest.write_u32(my_byte_offset + 0x8, my_offset + len(entry.children) + 1)
-            for child in [x for x in entry.children if not x.directory]:
-                self.write_recursively(child, dest, my_offset)
-            for child in [x for x in entry.children if x.directory]:
-                self.write_recursively(child, dest, my_offset)
-        else:
-            dest.write_u32(my_byte_offset + 0x0, name_offset)
-            dest.write_u32(my_byte_offset + 0x4, entry.offset)
-            dest.write_u32(my_byte_offset + 0x8, entry.length)
-
-
-@dataclass
-class FST:
-    root: FSTEntry
-
-    @staticmethod
-    def parse(src: DataReader):
-        root_data = FSTEntryData.parse(src)
-        entry_datas = []
-        for i in range(1, root_data.length):
-            entry_datas.append(FSTEntryData.parse(src.with_offset(i * 0xC)))
-        string_table = src.with_offset(root_data.length * 0xC)
-
-        root_entry = FSTEntry(
-            directory=True,
-            name=string_table.read_string(root_data.filename),
-            children=[]
-        )
-        entries = [root_entry]
-        directory_stack = [root_entry]
-        next_dir_offset = None
-        for entry_data in entry_datas:
-            offset = len(entries)
-            if offset == next_dir_offset:
-                directory_stack.pop()
-                next_dir_offset = directory_stack[-1].length
-
-            if entry_data.directory:
-                entry = FSTEntry(
-                    directory=True,
-                    name=string_table.read_string(entry_data.filename),
-                    children=[],
-                    length=entry_data.length
-                )
-                entries.append(entry)
-                parent = directory_stack[-1]
-                directory_stack.append(entry)
-                next_dir_offset = entry_data.length
-                parent.children.append(entry)
-            else:
-                entry = FSTEntry(
-                    directory=False,
-                    name=string_table.read_string(entry_data.filename),
-                    offset=entry_data.offset,
-                    length=entry_data.length
-                )
-                entries.append(entry)
-                parent = directory_stack[-1]
-                parent.children.append(entry)
-        return FST(root=root_entry)
-
-    def write(self, dest: DataWriter):
-        writer = FSTRecursiveWriter(self)
-        writer.write(dest)
-        return writer.len
-
-    def print(self):
-        self.root.print()
-
-    def get_ranges(self):
-        return self.root.get_ranges()
-
-    def find(self, path: [str]):
-        return self.root.find([self.root.name] + path)
-
-    def find_offset(self, offset: int):
-        return self.root.find_offset(offset)
-
-    def count(self):
-        return self.root.count()
-
-
-@dataclass
-class FSTEntryData:
-    directory: int
-    filename: int
-    offset: int
-    length: int
-
-    @staticmethod
-    def parse(src: DataReader):
-        return FSTEntryData(
-            directory=src.read_u8(0x0) != 0,
-            filename=src.read_u32(0x0) & 0x00FF_FFFF,
-            offset=src.read_u32(0x4),
-            length=src.read_u32(0x8),
-        )
-*/
 use std::fmt::{Debug, Formatter};
+use std::io::SeekFrom;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 #[derive(Clone)]
@@ -324,13 +129,260 @@ impl FSTEntry {
 
 impl BinStreamReadable for FST {
   fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<Self> {
-    todo!("Implement FST reading from stream")
+    fn read_entry_data<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<FSTEntryData> {
+      let name_and_type = stream.read_u32()?;
+      let directory = (name_and_type & 0xFF00_0000) != 0;
+      let filename = name_and_type & 0x00FF_FFFF;
+      let offset = stream.read_u32()?;
+      let length = stream.read_u32()?;
+
+      Ok(FSTEntryData {
+        directory,
+        filename,
+        offset,
+        length,
+      })
+    }
+
+    fn read_cstring<T: BinStreamRead>(
+      stream: &mut T,
+      base: u64,
+      offset: u32,
+      max_len: usize,
+    ) -> crate::binser::binstream::Result<String> {
+      let current_pos = stream.seek(SeekFrom::Current(0))?;
+      stream.seek(SeekFrom::Start(base + offset as u64))?;
+      let mut buf = Vec::new();
+      for _ in 0..max_len {
+        let byte = stream.read_u8()?;
+        if byte == 0 {
+          break;
+        }
+        buf.push(byte);
+      }
+      stream.seek(SeekFrom::Start(current_pos))?;
+      String::from_utf8(buf)
+        .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+
+    enum TempNode {
+      Directory {
+        name: String,
+        children: Vec<usize>,
+        offset_of_next_node: Option<u32>,
+      },
+      File {
+        name: String,
+        offset: u32,
+        length: u32,
+      },
+    }
+
+    fn build_entry(nodes: &[TempNode], index: usize) -> FSTEntry {
+      match &nodes[index] {
+        TempNode::Directory { name, children, .. } => {
+          let mut built_children = Vec::with_capacity(children.len());
+          for &child_index in children {
+            built_children.push(build_entry(nodes, child_index));
+          }
+          FSTEntry::Directory {
+            name: name.clone(),
+            children: Some(built_children),
+          }
+        }
+        TempNode::File { name, offset, length } => FSTEntry::File {
+          name: name.clone(),
+          offset: Some(*offset),
+          length: Some(*length),
+        },
+      }
+    }
+
+    let start = stream.seek(SeekFrom::Current(0))?;
+    let root_data = read_entry_data(stream)?;
+    let count = root_data.length;
+    let mut entry_datas = Vec::with_capacity(count.saturating_sub(1) as usize);
+    for _ in 1..count {
+      entry_datas.push(read_entry_data(stream)?);
+    }
+
+    let string_table_start = start + (count as u64) * 0xC;
+    let root_name = read_cstring(stream, string_table_start, root_data.filename, 256)?;
+    let mut max_string_end = root_data.filename as u64 + root_name.as_bytes().len() as u64 + 1;
+
+    let mut entries = Vec::with_capacity(count as usize);
+    entries.push(TempNode::Directory {
+      name: root_name,
+      children: Vec::new(),
+      offset_of_next_node: None,
+    });
+
+    let mut directory_stack = vec![0usize];
+    let mut next_dir_offset: Option<u32> = None;
+
+    for entry_data in entry_datas {
+      let offset = entries.len() as u32;
+      if Some(offset) == next_dir_offset {
+        directory_stack.pop();
+        next_dir_offset = directory_stack
+          .last()
+          .and_then(|&index| match &entries[index] {
+            TempNode::Directory { offset_of_next_node, .. } => *offset_of_next_node,
+            TempNode::File { .. } => None,
+          });
+      }
+
+      let name = read_cstring(stream, string_table_start, entry_data.filename, 256)?;
+      let name_end = entry_data.filename as u64 + name.as_bytes().len() as u64 + 1;
+      if name_end > max_string_end {
+        max_string_end = name_end;
+      }
+
+      if entry_data.directory {
+        let entry_index = entries.len();
+        entries.push(TempNode::Directory {
+          name,
+          children: Vec::new(),
+          offset_of_next_node: Some(entry_data.length),
+        });
+        if let Some(&parent_index) = directory_stack.last() {
+          if let TempNode::Directory { children, .. } = &mut entries[parent_index] {
+            children.push(entry_index);
+          }
+        }
+        directory_stack.push(entry_index);
+        next_dir_offset = Some(entry_data.length);
+      } else {
+        let entry_index = entries.len();
+        entries.push(TempNode::File {
+          name,
+          offset: entry_data.offset,
+          length: entry_data.length,
+        });
+        if let Some(&parent_index) = directory_stack.last() {
+          if let TempNode::Directory { children, .. } = &mut entries[parent_index] {
+            children.push(entry_index);
+          }
+        }
+      }
+    }
+
+    let root = build_entry(&entries, 0);
+    let total_len = (count as u64) * 0xC + max_string_end;
+    stream.seek(SeekFrom::Start(start + total_len))?;
+
+    Ok(FST { root })
   }
 }
 
 impl BinStreamWritable for FST {
   fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> crate::binser::binstream::Result<()> {
-    todo!("Implement FST writing to stream")
+    fn write_u32_at<T: BinStreamWrite>(
+      stream: &mut T,
+      base: u64,
+      offset: u64,
+      value: u32,
+    ) -> crate::binser::binstream::Result<()> {
+      stream.seek(SeekFrom::Start(base + offset))?;
+      stream.write_u32(value)?;
+      Ok(())
+    }
+
+    fn write_entry<T: BinStreamWrite>(
+      entry: &FSTEntry,
+      stream: &mut T,
+      base: u64,
+      string_table_start: u64,
+      file_offset: &mut u32,
+      string_offset: &mut u32,
+      parent_index: Option<u32>,
+      total_count: u32,
+    ) -> crate::binser::binstream::Result<()> {
+      let name = match entry {
+        FSTEntry::Directory { name, .. } => name,
+        FSTEntry::File { name, .. } => name,
+      };
+
+      let name_offset = *string_offset;
+      stream.seek(SeekFrom::Start(string_table_start + name_offset as u64))?;
+      stream.write_string(name)?;
+      stream.write_u8(0)?;
+      *string_offset += name.as_bytes().len() as u32 + 1;
+
+      let my_offset = *file_offset;
+      *file_offset += 1;
+      let my_byte_offset = (my_offset as u64) * 0xC;
+
+      match entry {
+        FSTEntry::Directory { children, .. } => {
+          let dir_header = (0x01u32 << 24) | name_offset;
+          write_u32_at(stream, base, my_byte_offset + 0x0, dir_header)?;
+          if let Some(parent) = parent_index {
+            write_u32_at(stream, base, my_byte_offset + 0x4, parent)?;
+            let child_count = children.as_ref().map_or(0u32, |c| c.len() as u32);
+            write_u32_at(stream, base, my_byte_offset + 0x8, my_offset + child_count + 1)?;
+          } else {
+            write_u32_at(stream, base, my_byte_offset + 0x4, 0)?;
+            write_u32_at(stream, base, my_byte_offset + 0x8, total_count)?;
+          }
+
+          if let Some(children) = children {
+            for child in children.iter().filter(|c| matches!(c, FSTEntry::File { .. })) {
+              write_entry(
+                child,
+                stream,
+                base,
+                string_table_start,
+                file_offset,
+                string_offset,
+                Some(my_offset),
+                total_count,
+              )?;
+            }
+            for child in children.iter().filter(|c| matches!(c, FSTEntry::Directory { .. })) {
+              write_entry(
+                child,
+                stream,
+                base,
+                string_table_start,
+                file_offset,
+                string_offset,
+                Some(my_offset),
+                total_count,
+              )?;
+            }
+          }
+        }
+        FSTEntry::File { offset, length, .. } => {
+          write_u32_at(stream, base, my_byte_offset + 0x0, name_offset)?;
+          write_u32_at(stream, base, my_byte_offset + 0x4, offset.unwrap_or(0))?;
+          write_u32_at(stream, base, my_byte_offset + 0x8, length.unwrap_or(0))?;
+        }
+      }
+
+      Ok(())
+    }
+
+    let base = stream.seek(SeekFrom::Current(0))?;
+    let total_count = self.root.count();
+    let string_table_start = base + (total_count as u64) * 0xC;
+    let mut file_offset = 0u32;
+    let mut string_offset = 0u32;
+
+    write_entry(
+      &self.root,
+      stream,
+      base,
+      string_table_start,
+      &mut file_offset,
+      &mut string_offset,
+      None,
+      total_count,
+    )?;
+
+    let total_len = (total_count as u64) * 0xC + string_offset as u64;
+    stream.seek(SeekFrom::Start(base + total_len))?;
+    Ok(())
   }
 }
 

@@ -9,13 +9,15 @@ use crate::progress::Progress;
 use std::io;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
-pub fn patch_dol_file(
-  progress: Arc<Mutex<Progress>>,
+pub fn patch_dol_file<F>(
+  progress_update: F,
   in_path: &PathBuf,
   out_path: &PathBuf,
   mod_path: &PathBuf,
   ignore_hash: bool,
-) -> Result<()> {
+) -> Result<()> where F: Fn(Progress) {
+  // at the moment we don't update progres becuase it's so fast
+  info!("Preparing to patch DOL file...");
   info!("Reading DOL file from {:?}", in_path);
   let dol_bytes = fs::read(in_path)?;
   info!("Read DOL file: {} bytes", dol_bytes.len());

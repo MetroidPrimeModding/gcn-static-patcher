@@ -71,6 +71,14 @@ impl eframe::App for PatcherApp {
             self.spawn_patch_thread(&path);
           }
         }
+        // progress bar
+        ui.add_space(25.0);
+        let progress = self.progress.lock().unwrap().clone();
+        if let Some(description) = &progress.description {
+          ui.label(description);
+        }
+        let percentage = progress.percentage() / 100.0;
+        ui.add(egui::ProgressBar::new(percentage).show_percentage());
       });
 
       preview_files_being_dropped(ui.ctx());
@@ -144,7 +152,10 @@ fn handle_patch_for_file(path: &PathBuf, progress: Arc<Mutex<Progress>>) -> Resu
       // mod is at cwd/prime-practice
       let mod_path = std::env::current_dir()?.join("prime-practice");
       patch_dol_file(
-        progress,
+        |new_progress| {
+          let mut prog = progress.lock().unwrap();
+          *prog = new_progress;
+        },
         path,
         &out_path,
         &mod_path,
@@ -153,7 +164,10 @@ fn handle_patch_for_file(path: &PathBuf, progress: Arc<Mutex<Progress>>) -> Resu
     } else if ext == "iso" || ext == "gcm" {
       info!("Patching ISO file: {:?}", path);
       patch_iso_file(
-        progress,
+        |new_progress| {
+          let mut prog = progress.lock().unwrap();
+          *prog = new_progress;
+        },
         path,
         &path.with_file_name("prime-practice-mod.iso"),
         &std::env::current_dir()?.join("prime-practice"),

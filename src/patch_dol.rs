@@ -7,7 +7,6 @@ use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 use crate::dol::DolHeader;
 use crate::progress::Progress;
 use std::io;
-use eframe::egui::Key::P;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 pub fn patch_dol_file(
@@ -103,7 +102,7 @@ fn patch_dol(mod_path: &PathBuf, dol_bytes: &Vec<u8>) -> Result<Vec<u8>> {
 
     // find a target section in the .dol with an offset of 0
     let mut found = false;
-    for mut dol_segment in dol_header.text.iter_mut().chain(dol_header.data.iter_mut()) {
+    for dol_segment in dol_header.text.iter_mut().chain(dol_header.data.iter_mut()) {
       if dol_segment.offset != 0 {
         continue;
       }
@@ -143,10 +142,10 @@ fn patch_dol(mod_path: &PathBuf, dol_bytes: &Vec<u8>) -> Result<Vec<u8>> {
   patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32 + 4, |x| {
     (x & 0xFFFF_0000) | areenalo_lower
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, hook_addr as u32, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, hook_addr as u32, |_| {
     build_b_rel24(hook_addr as u32, link_start as u32)
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_earlyboot_memset as u32, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_earlyboot_memset as u32, |_| {
     build_b_rel24(patch_earlyboot_memset as u32, patch_earlyboot_memset_addr as u32)
   })?;
 

@@ -7,6 +7,7 @@ edition = "2024"
 object = { version = "0.38.1" , default-features = false, features = ["read_core", "elf"]}
 eframe = { version = "0.33.3", features = ["default"] }
 egui_extras = { version = "0.33.3", features = ["default", "image"] }
+image = { version = "0.25.9", features = ["png"] }
 rfd = "0.17.2"
 
 anyhow = "1.0.100"

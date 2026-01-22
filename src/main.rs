@@ -12,7 +12,6 @@ mod binser;
 use anyhow::Result;
 use eframe;
 use eframe::egui;
-use object::{Object, ObjectSection};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;

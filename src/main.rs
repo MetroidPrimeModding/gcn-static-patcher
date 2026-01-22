@@ -8,6 +8,7 @@ mod patch_dol;
 mod progress;
 mod dol;
 mod binser;
+mod gcdisc;
 
 use anyhow::Result;
 use eframe;

@@ -14,11 +14,11 @@ impl Progress {
     }
   }
 
-  pub fn percentage(&self) -> f32 {
+  pub fn ratio(&self) -> f32 {
     if self.total == 0 {
-      0.0
+      1.0 // total is zero, consider it complete
     } else {
-      ((self.current as f64 / self.total as f64) * 100.0) as f32
+      (self.current as f64 / self.total as f64) as f32
     }
   }
 }

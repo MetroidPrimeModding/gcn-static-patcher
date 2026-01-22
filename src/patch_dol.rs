@@ -16,18 +16,21 @@ pub fn patch_dol_file<F>(
   mod_path: &PathBuf,
   ignore_hash: bool,
 ) -> Result<()> where F: Fn(Progress) {
-  // at the moment we don't update progres becuase it's so fast
+  progress_update(Progress::new(0, 4, "Reading DOL".to_string()));
   info!("Preparing to patch DOL file...");
   info!("Reading DOL file from {:?}", in_path);
   let dol_bytes = fs::read(in_path)?;
   info!("Read DOL file: {} bytes", dol_bytes.len());
 
+  progress_update(Progress::new(1, 4, "Patching DOL".to_string()));
   let out_bytes = patch_dol(mod_path, &dol_bytes)?;
 
+  progress_update(Progress::new(3, 4, "Writing DOL".to_string()));
   info!("Writing patched DOL file to {:?}", out_path);
   fs::write(out_path, &out_bytes)?;
   info!("Len of patched DOL file: {} bytes", out_bytes.len());
   info!("Mod size (in dol): {} bytes", out_bytes.len() - dol_bytes.len());
+  progress_update(Progress::new(4, 4, "Done patching dol".to_string()));
 
   Ok(())
 }

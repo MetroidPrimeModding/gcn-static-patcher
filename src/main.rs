@@ -14,7 +14,7 @@ use anyhow::Result;
 use eframe;
 use eframe::egui;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use log::{error, info};
 use crate::patch_dol::patch_dol_file;
@@ -44,19 +44,28 @@ fn main() -> eframe::Result {
 }
 
 struct PatcherApp {
-  progress: Arc<Mutex<Progress>>,
+  progress: Progress,
+  progress_rx: Receiver<Progress>,
+  progress_tx: Sender<Progress>,
 }
 
 impl Default for PatcherApp {
   fn default() -> Self {
+    let (progress_tx, progress_rx) = mpsc::channel();
     Self {
-      progress: Arc::new(Mutex::new(Progress::default())),
+      progress: Progress::new(0, 0, "Idle".to_string()),
+      progress_rx,
+      progress_tx,
     }
   }
 }
 
 impl eframe::App for PatcherApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    while let Ok(progress) = self.progress_rx.try_recv() {
+      self.progress = progress;
+    }
+
     egui::CentralPanel::default().show(ctx, |ui| {
       ui.vertical_centered(|ui| {
         ui.heading("Prime Practice Patcher");
@@ -68,16 +77,15 @@ impl eframe::App for PatcherApp {
         ui.add_space(15.0);
         if ui.button("Open file…").clicked() {
           if let Some(path) = rfd::FileDialog::new().pick_file() {
-            self.spawn_patch_thread(&path);
+            self.spawn_patch_thread(&path, ctx);
           }
         }
         // progress bar
         ui.add_space(25.0);
-        let progress = self.progress.lock().unwrap().clone();
-        if let Some(description) = &progress.description {
+        if let Some(description) = &self.progress.description {
           ui.label(description);
         }
-        let percentage = progress.percentage() / 100.0;
+        let percentage = self.progress.ratio();
         ui.add(egui::ProgressBar::new(percentage).show_percentage());
       });
 
@@ -88,7 +96,7 @@ impl eframe::App for PatcherApp {
         let first_dropped_file = i.raw.dropped_files.first();
         if let Some(file) = first_dropped_file {
           if let Some(path) = &file.path {
-            self.spawn_patch_thread(path);
+            self.spawn_patch_thread(path, ctx);
           }
         }
       });
@@ -97,14 +105,15 @@ impl eframe::App for PatcherApp {
 }
 
 impl PatcherApp {
-  fn spawn_patch_thread(&mut self, path: &PathBuf) {
+  fn spawn_patch_thread(&mut self, path: &PathBuf, ctx: &egui::Context) {
     info!("File dropped, spawning patch thread: {:?}", path);
     let path_clone = path.clone();
-    let progress_clone = Arc::clone(&self.progress);
+    let ctx_clone = ctx.clone();
+    let progress_tx = self.progress_tx.clone();
     // Spawn a new thread to handle the patching
     thread::spawn(move || {
       info!("Starting patch for file: {:?}", path_clone);
-      let result = handle_patch_for_file(&path_clone, progress_clone);
+      let result = handle_patch_for_file(&path_clone, progress_tx, &ctx_clone);
       match result {
         Ok(_) => info!("Successfully patched file: {:?}", path_clone),
         Err(e) => error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace()),
@@ -144,7 +153,7 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
   }
 }
 
-fn handle_patch_for_file(path: &PathBuf, progress: Arc<Mutex<Progress>>) -> Result<()> {
+fn handle_patch_for_file(path: &PathBuf, progress_tx: Sender<Progress>, ctx: &egui::Context) -> Result<()> {
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
@@ -153,8 +162,8 @@ fn handle_patch_for_file(path: &PathBuf, progress: Arc<Mutex<Progress>>) -> Resu
       let mod_path = std::env::current_dir()?.join("prime-practice");
       patch_dol_file(
         |new_progress| {
-          let mut prog = progress.lock().unwrap();
-          *prog = new_progress;
+          let _ = progress_tx.send(new_progress);
+          ctx.request_repaint();
         },
         path,
         &out_path,
@@ -165,8 +174,8 @@ fn handle_patch_for_file(path: &PathBuf, progress: Arc<Mutex<Progress>>) -> Resu
       info!("Patching ISO file: {:?}", path);
       patch_iso_file(
         |new_progress| {
-          let mut prog = progress.lock().unwrap();
-          *prog = new_progress;
+          let _ = progress_tx.send(new_progress);
+          ctx.request_repaint();
         },
         path,
         &path.with_file_name("prime-practice-mod.iso"),

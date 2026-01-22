@@ -9,6 +9,7 @@ mod progress;
 mod dol;
 mod binser;
 mod gcdisc;
+mod patch_config;
 
 use anyhow::Result;
 use eframe;
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use log::{error, info};
+use crate::patch_config::PatchConfig;
 use crate::patch_dol::patch_dol_file;
 use crate::patch_iso::patch_iso_file;
 use crate::progress::Progress;
@@ -27,6 +29,13 @@ fn main() -> eframe::Result {
     .filter_level(log::LevelFilter::Info)
     .init();
 
+  // TODO: load this from a file
+  let patch_config = PatchConfig {
+    game_name: "Metroid Prime 2: Echoes".to_string(),
+    mod_name: "Practice Mod".to_string(),
+    expected_hash: Some("ce781ad1452311ca86667cf8dbd7d112".to_string()),
+  };
+
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
     ..Default::default()
@@ -36,7 +45,7 @@ fn main() -> eframe::Result {
     options,
     Box::new(|cc| {
       egui_extras::install_image_loaders(&cc.egui_ctx);
-      Ok(Box::<PatcherApp>::default())
+      Ok(Box::<PatcherApp>::new(PatcherApp::new(patch_config)))
     }),
   )?;
 
@@ -44,15 +53,17 @@ fn main() -> eframe::Result {
 }
 
 struct PatcherApp {
+  config: PatchConfig,
   progress: Progress,
   progress_rx: Receiver<Progress>,
   progress_tx: Sender<Progress>,
 }
 
-impl Default for PatcherApp {
-  fn default() -> Self {
+impl PatcherApp {
+  fn new(patch_config: PatchConfig) -> Self {
     let (progress_tx, progress_rx) = mpsc::channel();
     Self {
+      config: patch_config,
       progress: Progress::new(0, 0, "Idle".to_string()),
       progress_rx,
       progress_tx,
@@ -68,9 +79,10 @@ impl eframe::App for PatcherApp {
 
     egui::CentralPanel::default().show(ctx, |ui| {
       ui.vertical_centered(|ui| {
-        ui.heading("Prime Practice Patcher");
+        ui.heading(&self.config.game_name);
+        ui.heading(&self.config.mod_name);
         ui.add_space(15.0);
-        ui.label("Drag-and-drop a default.dol or .iso to patch");
+        ui.label("Drag-and-drop a .dol or .iso to patch");
         ui.label("(or select with the button below)");
         ui.add_space(15.0);
         ui.label("The output file will be created next to the input file");
@@ -110,10 +122,16 @@ impl PatcherApp {
     let path_clone = path.clone();
     let ctx_clone = ctx.clone();
     let progress_tx = self.progress_tx.clone();
+    let config_clone = self.config.clone();
     // Spawn a new thread to handle the patching
     thread::spawn(move || {
       info!("Starting patch for file: {:?}", path_clone);
-      let result = handle_patch_for_file(&path_clone, progress_tx, &ctx_clone);
+      let result = handle_patch_for_file(
+        &path_clone,
+        &config_clone,
+        progress_tx,
+        &ctx_clone,
+      );
       match result {
         Ok(_) => info!("Successfully patched file: {:?}", path_clone),
         Err(e) => error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace()),
@@ -153,7 +171,12 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
   }
 }
 
-fn handle_patch_for_file(path: &PathBuf, progress_tx: Sender<Progress>, ctx: &egui::Context) -> Result<()> {
+fn handle_patch_for_file(
+  path: &PathBuf,
+  config: &PatchConfig,
+  progress_tx: Sender<Progress>,
+  ctx: &egui::Context,
+) -> Result<()> {
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
@@ -180,7 +203,7 @@ fn handle_patch_for_file(path: &PathBuf, progress_tx: Sender<Progress>, ctx: &eg
         path,
         &path.with_file_name("prime-practice-mod.iso"),
         &std::env::current_dir()?.join("prime-practice"),
-        false,
+        config,
       )?;
     } else {
       error!("Unsupported file type: {:?}", path);

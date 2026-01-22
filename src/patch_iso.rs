@@ -3,25 +3,21 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use log::info;
 use md5::Digest;
+use crate::patch_config::PatchConfig;
 use crate::progress::Progress;
-
-// mp2 0-00 hash of a clean ISO (md5)
-const expected_iso_hash: &str = "ce781ad1452311ca86667cf8dbd7d112";
 
 pub fn patch_iso_file<F>(
     progress_update: F,
     in_path: &PathBuf,
     out_path: &PathBuf,
     mod_path: &PathBuf,
-    ignore_hash: bool,
+    config: &PatchConfig,
 ) -> Result<()> where F: Fn(Progress) {
     info!("Preparing to patch ISO file...");
     let input_file = std::fs::File::open(in_path)?;
     let input_file_mmap = unsafe { memmap2::MmapOptions::new().map(&input_file)? };
 
-    if ignore_hash {
-        info!("Skipping hash verification");
-    } else {
+    if let Some(expected_iso_hash) = config.expected_hash.clone() {
         info!("Verifying input ISO hash...");
         let mut hasher = md5::Md5::new();
         // Read the file in chunks to avoid high memory usage
@@ -51,12 +47,14 @@ pub fn patch_iso_file<F>(
             ));
         }
         info!("Input ISO hash verified.");
+    } else {
+        info!("Skipping hash verification");
     }
 
     // let output_file = std::fs::File::create(out_path)?;
     // let mut output_file_mmap = unsafe { memmap2::MmapOptions::new().map_mut(&output_file)? };
 
-    
+
     progress_update(Progress::new(0, 0, "Done patching ISO".to_string()));
     Ok(())
 }

@@ -1,4 +1,0 @@
-[submodule "python/pyelftools"]
-	path = python/pyelftools
-	url = git@github.com:eliben/pyelftools.git
-

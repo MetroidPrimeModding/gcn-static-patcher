@@ -6,3 +6,5 @@ mod.elf
 /.idea
 *.iso
 .DS_Store
+# kept in my local copy for reference
+/python

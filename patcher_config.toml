@@ -1,0 +1,48 @@
+##[derive(Debug, Clone, Serialize, Deserialize)]
+#pub struct PatchConfig {
+#  pub game_name: String,
+#  pub mod_name: String,
+#  pub expected_hash: Option<String>,
+#  pub mod_file: String,
+#  pub bnr_file: Option<String>,
+#
+#  pub output_name_iso: String,
+#  pub output_name_dol: String,
+#
+#  /// List of branch patches to apply
+#  #[serde(default)]
+#  pub branch_patches: Vec<PatchBranchConfig>,
+#
+#  /// This will override the output path for both ISO and DOL outputs
+#  /// Specified via CLI only
+#  #[serde(skip, default)]
+#  pub output_path_override: Option<PathBuf>,
+#}
+#
+##[derive(Debug, Clone, Serialize, Deserialize)]
+#pub struct PatchBranchConfig {
+#  pub branch_from_symbol: String,
+#  pub to_symbol: String,
+#}
+
+# Example configuration for GCN Static Patcher
+game_name = "Metroid Prime 2: Echoes"
+mod_name = "Echoes Practice Mod"
+# optional; if not present, hash check is skipped
+expected_iso_hash = "ce781ad1452311ca86667cf8dbd7d112"
+expected_dol_hash = "c0a39215dcb3fa9affb0f208c9f78a7c"
+# Name of the static .elf file containing the mod
+mod_file = "prime-practice"
+# optional; if not present, no BNR will be used
+bnr_file = "opening_practice.bnr"
+# Default output ISO name
+output_name_iso = "prime2-practice-mod.iso"
+# Default output DOL name
+output_name_dol = "default_mod.dol"
+# Symbol name of the place to jump *from* to entry point of the mod
+entry_point_symbol = "PPCSetFpIEEEMode"
+
+# List of additional branch patches to apply
+[[branch_patches]]
+branch_from_symbol = "_PATCH_EARLYBOOT_MEMSET"
+to_symbol = "_earlyboot_memset"

@@ -34,6 +34,9 @@ struct Args {
   /// Output file path. If not provided, output will be next to input file.
   #[arg(short, long, value_name = "FILE")]
   output_file: Option<PathBuf>,
+  /// Ignore hash check (may not work correctly)
+  #[arg(long)]
+  ignore_hash: bool,
 }
 
 fn main() -> Result<()> {
@@ -45,24 +48,27 @@ fn main() -> Result<()> {
 
   let args = Args::parse();
 
-  // TODO: load this from a file
-  let patch_config = PatchConfig {
-    game_name: "Metroid Prime 2: Echoes".to_string(),
-    mod_name: "Echoes Practice Mod".to_string(),
-    // expected_hash: Some("ce781ad1452311ca86667cf8dbd7d112".to_string()),
-    expected_hash: None,
-    mod_file: "prime-practice".to_string(),
-    bnr_file: Some("python/opening_practice.bnr".to_string()),
-    output_name_iso: "prime2-practice-mod.iso".to_string(),
-    output_name_dol: "default_mod.dol".to_string(),
-    output_path_override: args.output_file,
+  // load from patcher_config.toml
+  let mut patch_config: PatchConfig = {
+    let config_str = std::fs::read_to_string("patcher_config.toml")
+      .map_err(|e| anyhow::anyhow!("Failed to read patcher_config.toml: {}", e))?;
+    toml::from_str(&config_str)
+      .map_err(|e| anyhow::anyhow!("Failed to parse patcher_config.toml: {}", e))?
   };
 
+  // Override output path if provided via CLI
+  if let Some(output_path) = &args.output_file {
+    patch_config.output_path_override = Some(output_path.clone());
+  }
+
   if let Some(input_path) = args.input_file {
-   run_cli(&input_path, &patch_config)?;
+    if args.ignore_hash {
+      patch_config.expected_iso_hash = None;
+      patch_config.expected_dol_hash = None;
+    }
+    run_cli(&input_path, &patch_config)?;
   } else {
-    info!("Running in GUI mode.");
-    run_gui(patch_config)?;
+    run_gui(&args, patch_config)?;
   }
 
   Ok(())
@@ -101,7 +107,8 @@ fn run_cli(input_path: &PathBuf, patch_config: &PatchConfig) -> Result<()> {
   }
 }
 
-fn run_gui(patch_config: PatchConfig) -> Result<()> {
+fn run_gui(args: &Args, patch_config: PatchConfig) -> Result<()> {
+  info!("Running in GUI mode.");
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
     ..Default::default()
@@ -111,7 +118,11 @@ fn run_gui(patch_config: PatchConfig) -> Result<()> {
     options,
     Box::new(|cc| {
       egui_extras::install_image_loaders(&cc.egui_ctx);
-      Ok(Box::<PatcherApp>::new(PatcherApp::new(patch_config)))
+      let mut app = Box::<PatcherApp>::new(PatcherApp::new(patch_config));
+      if args.ignore_hash {
+        app.ignore_hash = true;
+      }
+      Ok(app)
     }),
   ).map_err(|e| anyhow::anyhow!("Failed to start GUI: {}", e))
 }
@@ -121,6 +132,7 @@ struct PatcherApp {
   progress: Progress,
   progress_rx: Receiver<Progress>,
   progress_tx: Sender<Progress>,
+  ignore_hash: bool,
 }
 
 impl PatcherApp {
@@ -131,6 +143,7 @@ impl PatcherApp {
       progress: Progress::new(0, 0, "Idle".to_string()),
       progress_rx,
       progress_tx,
+      ignore_hash: false,
     }
   }
 }
@@ -150,6 +163,11 @@ impl eframe::App for PatcherApp {
         ui.label("(or select with the button below)");
         ui.add_space(15.0);
         ui.label("The output file will be created next to the input file.");
+        ui.add_space(15.0);
+        ui.checkbox(&mut self.ignore_hash, "Ignore hash check");
+        if self.ignore_hash {
+          ui.colored_label(egui::Color32::from_rgb(200, 20, 20), "Warning: Modified inputs may cause the patch to fail or the game to crash");
+        }
         ui.add_space(15.0);
         if ui.button("Open file…").clicked() {
           if let Some(path) = rfd::FileDialog::new().pick_file() {
@@ -196,7 +214,11 @@ impl PatcherApp {
     let path_clone = path.clone();
     let ctx_clone = ctx.clone();
     let progress_tx = self.progress_tx.clone();
-    let config_clone = self.config.clone();
+    let mut config_clone = self.config.clone();
+    if self.ignore_hash {
+      config_clone.expected_iso_hash = None;
+      config_clone.expected_dol_hash = None;
+    }
     // Spawn a new thread to handle the patching
     thread::spawn(move || {
       info!("Starting patch for file: {:?}", path_clone);
@@ -261,7 +283,9 @@ fn handle_patch_for_file<F>(
   config: &PatchConfig,
   progress_tx: &Sender<Progress>,
   request_ui_update: F,
-) -> Result<PathBuf> where F: Fn() {
+) -> Result<PathBuf> where
+  F: Fn(),
+{
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);

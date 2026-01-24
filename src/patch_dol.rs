@@ -7,6 +7,7 @@ use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 use crate::dol::DolHeader;
 use crate::progress::Progress;
 use std::io;
+use md5::Digest;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use crate::patch_config::PatchConfig;
 
@@ -16,6 +17,10 @@ pub fn patch_dol_file<F>(
   out_path: &PathBuf,
   config: &PatchConfig,
 ) -> Result<()> where F: Fn(Progress) {
+  if out_path.exists() {
+    return Err(anyhow::anyhow!("Output file already exists: {:?}", out_path));
+  }
+
   progress_update(Progress::new(0, 4, "Reading DOL".to_string()));
   info!("Preparing to patch DOL file...");
   info!("Reading DOL file from {:?}", in_path);
@@ -27,7 +32,7 @@ pub fn patch_dol_file<F>(
   let mod_path = std::env::current_dir()?
     .join(&config.mod_file);
   let mod_bytes = fs::read(mod_path)?;
-  let out_bytes = patch_dol(&mod_bytes, &dol_bytes)?;
+  let out_bytes = patch_dol(&mod_bytes, &dol_bytes, &config)?;
 
   progress_update(Progress::new(3, 4, "Writing DOL".to_string()));
   info!("Writing patched DOL file to {:?}", out_path);
@@ -39,7 +44,25 @@ pub fn patch_dol_file<F>(
   Ok(())
 }
 
-pub fn patch_dol(mod_bytes: &[u8], dol_bytes: &[u8]) -> Result<Vec<u8>> {
+pub fn patch_dol(
+  mod_bytes: &[u8],
+  dol_bytes: &[u8],
+  config: &PatchConfig,
+) -> Result<Vec<u8>> {
+  if let Some(expected_dol_hash) = config.expected_dol_hash.clone() {
+    info!("Verifying input DOL hash...");
+    let mut hasher = md5::Md5::new();
+    hasher.update(dol_bytes);
+    let result_hash = format!("{:x}", hasher.finalize());
+    if result_hash != expected_dol_hash {
+      return Err(anyhow::anyhow!(
+                "Input DOL hash does not match expected hash. Expected: {}, Got: {}. Check \"Ignore Hash\" option to bypass this check.",
+                expected_dol_hash,
+                result_hash
+            ));
+    }
+  }
+
   let mut dol_header = DolHeader::read_from_stream(&mut io::Cursor::new(dol_bytes))?;
   info!("DOL Header: {:?}", dol_header);
 
@@ -55,15 +78,17 @@ pub fn patch_dol(mod_bytes: &[u8], dol_bytes: &[u8]) -> Result<Vec<u8>> {
     })
     .collect::<std::collections::HashMap<_, _>>();
 
-  let link_start = symbol_map.get("_LINK_START")
-    .ok_or_else(|| anyhow::anyhow!("Missing symbol _LINK_START"))?
-    .address();
+  let entry_addr = mod_file.entry();
+
+  // let link_start = symbol_map.get("_LINK_START")
+  //   .ok_or_else(|| anyhow::anyhow!("Missing symbol _LINK_START"))?
+  //   .address();
   let link_end = symbol_map.get("_LINK_END")
     .ok_or_else(|| anyhow::anyhow!("Missing symbol _LINK_END"))?
     .address();
-  let link_size = symbol_map.get("_LINK_SIZE")
-    .ok_or_else(|| anyhow::anyhow!("Missing symbol _LINK_SIZE"))?
-    .address();
+  // let link_size = symbol_map.get("_LINK_SIZE")
+  //   .ok_or_else(|| anyhow::anyhow!("Missing symbol _LINK_SIZE"))?
+  //   .address();
   let patch_arena_lo_1 = symbol_map.get("_PATCH_ARENA_LO_1")
     .ok_or_else(|| anyhow::anyhow!("Missing symbol _PATCH_ARENA_LO_1"))?
     .address();
@@ -76,8 +101,8 @@ pub fn patch_dol(mod_bytes: &[u8], dol_bytes: &[u8]) -> Result<Vec<u8>> {
   let patch_earlyboot_memset_addr = symbol_map.get("_earlyboot_memset")
     .ok_or_else(|| anyhow::anyhow!("Missing symbol _earlyboot_memset"))?
     .address();
-  let hook_addr = symbol_map.get("PPCSetFpIEEEMode")
-    .ok_or_else(|| anyhow::anyhow!("Missing symbol PPCSetFpIEEEMode"))?
+  let entry_hook_addr = symbol_map.get(&config.entry_point_symbol)
+    .ok_or_else(|| anyhow::anyhow!("Missing symbol {}", config.entry_point_symbol))?
     .address();
 
   let mut output_bytes = dol_bytes.to_vec();
@@ -150,8 +175,8 @@ pub fn patch_dol(mod_bytes: &[u8], dol_bytes: &[u8]) -> Result<Vec<u8>> {
   patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32 + 4, |x| {
     (x & 0xFFFF_0000) | areenalo_lower
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, hook_addr as u32, |_| {
-    build_b_rel24(hook_addr as u32, link_start as u32)
+  patch_dol_addr_32(&dol_header, &mut output_bytes, entry_hook_addr as u32, |_| {
+    build_b_rel24(entry_hook_addr as u32, entry_addr as u32)
   })?;
   patch_dol_addr_32(&dol_header, &mut output_bytes, patch_earlyboot_memset as u32, |_| {
     build_b_rel24(patch_earlyboot_memset as u32, patch_earlyboot_memset_addr as u32)

@@ -28,7 +28,7 @@ pub fn patch_iso_file<F>(
   let input_file = fs::File::open(in_path)?;
   let input_file_mmap = unsafe { memmap2::MmapOptions::new().map(&input_file)? };
 
-  if let Some(expected_iso_hash) = config.expected_hash.clone() {
+  if let Some(expected_iso_hash) = config.expected_iso_hash.clone() {
     info!("Verifying input ISO hash...");
     let mut hasher = md5::Md5::new();
     // Read the file in chunks to avoid high memory usage
@@ -52,7 +52,7 @@ pub fn patch_iso_file<F>(
     let result_hash = format!("{:x}", hasher.finalize());
     if result_hash != expected_iso_hash {
       return Err(anyhow::anyhow!(
-                "Input ISO hash does not match expected hash. Expected: {}, Got: {}. Use ignore_hash option to bypass this check.",
+                "Input ISO hash does not match expected hash. Expected: {}, Got: {}. Check \"Ignore Hash\" option to bypass this check.",
                 expected_iso_hash,
                 result_hash
             ));
@@ -91,7 +91,7 @@ pub fn patch_iso_file<F>(
   let mod_path = std::env::current_dir()?
     .join(&config.mod_file);
   let mod_bytes = fs::read(mod_path)?;
-  let patched_dol_bytes = patch_dol(&mod_bytes, unpatched_dol_bytes)?;
+  let patched_dol_bytes = patch_dol(&mod_bytes, unpatched_dol_bytes, &config)?;
 
   info!("Finding a suitable gap...");
   let file_ranges = fst.root.get_ranges();

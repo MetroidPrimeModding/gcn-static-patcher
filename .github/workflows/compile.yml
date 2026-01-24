@@ -1,4 +1,4 @@
-name: build
+name: Compile gcn-static-patcher
 
 on:
   push:

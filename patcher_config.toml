@@ -1,30 +1,3 @@
-##[derive(Debug, Clone, Serialize, Deserialize)]
-#pub struct PatchConfig {
-#  pub game_name: String,
-#  pub mod_name: String,
-#  pub expected_hash: Option<String>,
-#  pub mod_file: String,
-#  pub bnr_file: Option<String>,
-#
-#  pub output_name_iso: String,
-#  pub output_name_dol: String,
-#
-#  /// List of branch patches to apply
-#  #[serde(default)]
-#  pub branch_patches: Vec<PatchBranchConfig>,
-#
-#  /// This will override the output path for both ISO and DOL outputs
-#  /// Specified via CLI only
-#  #[serde(skip, default)]
-#  pub output_path_override: Option<PathBuf>,
-#}
-#
-##[derive(Debug, Clone, Serialize, Deserialize)]
-#pub struct PatchBranchConfig {
-#  pub branch_from_symbol: String,
-#  pub to_symbol: String,
-#}
-
 # Example configuration for GCN Static Patcher
 game_name = "Metroid Prime 2: Echoes"
 mod_name = "Echoes Practice Mod"

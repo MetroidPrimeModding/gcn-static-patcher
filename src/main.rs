@@ -18,16 +18,32 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use log::{error, info};
+use clap::Parser;
 use crate::patch_config::PatchConfig;
 use crate::patch_dol::patch_dol_file;
 use crate::patch_iso::patch_iso_file;
 use crate::progress::Progress;
 
-fn main() -> eframe::Result {
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+  /// Input file to patch (.dol or .iso)
+  /// If provided, the app will run in CLI mode and exit after patching.
+  #[arg(short, long, value_name = "FILE")]
+  input_file: Option<PathBuf>,
+  /// Output file path. If not provided, output will be next to input file.
+  #[arg(short, long, value_name = "FILE")]
+  output_file: Option<PathBuf>,
+}
+
+fn main() -> Result<()> {
+  // Initialize logging
   env_logger::Builder::from_default_env()
     .target(env_logger::Target::Stdout)
     .filter_level(log::LevelFilter::Info)
     .init();
+
+  let args = Args::parse();
 
   // TODO: load this from a file
   let patch_config = PatchConfig {
@@ -35,11 +51,57 @@ fn main() -> eframe::Result {
     mod_name: "Echoes Practice Mod".to_string(),
     // expected_hash: Some("ce781ad1452311ca86667cf8dbd7d112".to_string()),
     expected_hash: None,
-    output_name: "prime2-practice-mod.iso".to_string(),
     mod_file: "prime-practice".to_string(),
     bnr_file: Some("python/opening_practice.bnr".to_string()),
+    output_name_iso: "prime2-practice-mod.iso".to_string(),
+    output_name_dol: "default_mod.dol".to_string(),
+    output_path_override: args.output_file,
   };
 
+  if let Some(input_path) = args.input_file {
+   run_cli(&input_path, &patch_config)?;
+  } else {
+    info!("Running in GUI mode.");
+    run_gui(patch_config)?;
+  }
+
+  Ok(())
+}
+
+fn run_cli(input_path: &PathBuf, patch_config: &PatchConfig) -> Result<()> {
+  info!("Running in CLI mode. Input file: {:?}", input_path);
+  let (progress_tx, progress_rx) = mpsc::channel();
+
+  let result = handle_patch_for_file(
+    input_path,
+    patch_config,
+    &progress_tx,
+    // dummy context for CLI mode
+    || {},
+  );
+
+  // Print progress updates
+  while let Ok(progress) = progress_rx.recv() {
+    if let Some(description) = &progress.description {
+      println!("Progress: {:.2}% - {}", progress.ratio() * 100.0, description);
+    } else {
+      println!("Progress: {:.2}%", progress.ratio() * 100.0);
+    }
+  }
+
+  match result {
+    Ok(out_path) => {
+      println!("Successfully patched file: {:?}", out_path);
+      Ok(())
+    }
+    Err(e) => {
+      eprintln!("Error patching file {:?}: {}", input_path, e);
+      Err(e)
+    }
+  }
+}
+
+fn run_gui(patch_config: PatchConfig) -> Result<()> {
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
     ..Default::default()
@@ -51,9 +113,7 @@ fn main() -> eframe::Result {
       egui_extras::install_image_loaders(&cc.egui_ctx);
       Ok(Box::<PatcherApp>::new(PatcherApp::new(patch_config)))
     }),
-  )?;
-
-  Ok(())
+  ).map_err(|e| anyhow::anyhow!("Failed to start GUI: {}", e))
 }
 
 struct PatcherApp {
@@ -144,7 +204,7 @@ impl PatcherApp {
         &path_clone,
         &config_clone,
         &progress_tx,
-        &ctx_clone,
+        || { ctx_clone.request_repaint(); },
       );
       match result {
         Ok(out_path) => {
@@ -196,27 +256,21 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
   }
 }
 
-fn handle_patch_for_file(
+fn handle_patch_for_file<F>(
   path: &PathBuf,
   config: &PatchConfig,
   progress_tx: &Sender<Progress>,
-  ctx: &egui::Context,
-) -> Result<PathBuf> {
+  request_ui_update: F,
+) -> Result<PathBuf> where F: Fn() {
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
-      let out_path = path.with_file_name(format!(
-        "{}_mod.dol",
-        path.file_stem()
-          .and_then(|s| s.to_str())
-          .unwrap_or("output")
-      ));
-      // mod is at cwd/prime-practice
-      let mod_path = std::env::current_dir()?.join("prime-practice");
+      let out_path = config.output_path_override.clone()
+        .unwrap_or_else(|| path.with_file_name(&config.output_name_dol));
       patch_dol_file(
         |new_progress| {
           let _ = progress_tx.send(new_progress);
-          ctx.request_repaint();
+          request_ui_update();
         },
         path,
         &out_path,
@@ -225,11 +279,12 @@ fn handle_patch_for_file(
       Ok(out_path)
     } else if ext == "iso" || ext == "gcm" {
       info!("Patching ISO file: {:?}", path);
-      let out_path = path.with_file_name(&config.output_name);
+      let out_path = config.output_path_override.clone()
+        .unwrap_or_else(|| path.with_file_name(&config.output_name_iso));
       patch_iso_file(
         |new_progress| {
           let _ = progress_tx.send(new_progress);
-          ctx.request_repaint();
+          request_ui_update();
         },
         path,
         &out_path,

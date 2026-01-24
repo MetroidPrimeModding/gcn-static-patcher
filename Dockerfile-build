@@ -13,7 +13,7 @@ RUN apt-get update && apt-get upgrade -y && \
     apt-get -y clean
 
 # Copy gcn-static-patcher from its build stage
-COPY --from=gcn-static-patcher /opt/gcn-static-patcher /opt/gcn-static-patcher
+COPY --from=gcn-static-patcher /usr/local/bin/gcn-static-patcher-cli /usr/local/bin/gcn-static-patcher-cli
 
 ENV LLVM_DIR=/usr/lib/llvm-19
 ENV LLD_DIR=/usr/lib/llvm-19

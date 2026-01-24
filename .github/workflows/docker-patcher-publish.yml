@@ -2,7 +2,7 @@ name: Build and Publish patcher Docker Image
 
 on:
   workflow_run:
-    workflows: ["build"]
+    workflows: ["compile"]
     types: [completed]
 
 permissions:

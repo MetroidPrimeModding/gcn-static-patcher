@@ -1,13 +1,25 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+pub struct ModData {
+  pub elf_bytes: Vec<u8>,
+  pub config: ModConfig,
+}
+
+impl ModData {
+  pub fn parse_elf(&self) -> Result<object::File<'_>, object::Error> {
+    object::File::parse(&self.elf_bytes)
+  }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PatchConfig {
+pub struct ModConfig {
   pub game_name: String,
   pub mod_name: String,
+  pub version: String,
   pub expected_iso_hash: Option<String>,
   pub expected_dol_hash: Option<String>,
-  pub mod_file: String,
   pub bnr_file: Option<String>,
 
   pub output_name_iso: String,

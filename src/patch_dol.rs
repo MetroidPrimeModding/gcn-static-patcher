@@ -1,20 +1,20 @@
-use std::fs;
-use anyhow::Result;
-use std::path::PathBuf;
-use log::info;
-use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
-use crate::dol::DolHeader;
-use crate::progress::Progress;
-use std::io;
-use md5::Digest;
 use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
-use crate::patch_config::PatchConfig;
+use crate::dol::DolHeader;
+use crate::patch_config::{ModConfig, ModData};
+use crate::progress::Progress;
+use anyhow::Result;
+use log::info;
+use md5::Digest;
+use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 
 pub fn patch_dol_file<F>(
   progress_update: F,
   in_path: &PathBuf,
   out_path: &PathBuf,
-  config: &PatchConfig,
+  mod_data: &ModData,
 ) -> Result<()> where F: Fn(Progress) {
   if out_path.exists() {
     return Err(anyhow::anyhow!("Output file already exists: {:?}", out_path));
@@ -28,10 +28,7 @@ pub fn patch_dol_file<F>(
 
   progress_update(Progress::new(1, 4, "Patching DOL".to_string()));
   // path is relative to the executable
-  let mod_path = std::env::current_dir()?
-    .join(&config.mod_file);
-  let mod_bytes = fs::read(mod_path)?;
-  let out_bytes = patch_dol(&mod_bytes, &dol_bytes, &config)?;
+  let out_bytes = patch_dol(&mod_data, &dol_bytes)?;
 
   progress_update(Progress::new(3, 4, "Writing DOL".to_string()));
   info!("Writing patched DOL file to {:?}", out_path);
@@ -44,11 +41,10 @@ pub fn patch_dol_file<F>(
 }
 
 pub fn patch_dol(
-  mod_bytes: &[u8],
+  mod_data: &ModData,
   dol_bytes: &[u8],
-  config: &PatchConfig,
 ) -> Result<Vec<u8>> {
-  if let Some(expected_dol_hash) = config.expected_dol_hash.clone() {
+  if let Some(expected_dol_hash) = mod_data.config.expected_dol_hash.clone() {
     info!("Verifying input DOL hash...");
     let mut hasher = md5::Md5::new();
     hasher.update(dol_bytes);
@@ -65,7 +61,7 @@ pub fn patch_dol(
   let mut dol_header = DolHeader::read_from_stream(&mut io::Cursor::new(dol_bytes))?;
   info!("DOL Header: {:?}", dol_header);
 
-  let mod_file = object::File::parse(mod_bytes)?;
+  let mod_file = mod_data.parse_elf()?;
 
   let symbol_map = mod_file.symbols()
     .filter_map(|sym| {
@@ -100,8 +96,8 @@ pub fn patch_dol(
   let patch_earlyboot_memset_addr = symbol_map.get("_earlyboot_memset")
     .ok_or_else(|| anyhow::anyhow!("Missing symbol _earlyboot_memset"))?
     .address();
-  let entry_hook_addr = symbol_map.get(&config.entry_point_symbol)
-    .ok_or_else(|| anyhow::anyhow!("Missing symbol {}", config.entry_point_symbol))?
+  let entry_hook_addr = symbol_map.get(&mod_data.config.entry_point_symbol)
+    .ok_or_else(|| anyhow::anyhow!("Missing symbol {}", mod_data.config.entry_point_symbol))?
     .address();
 
   let mut output_bytes = dol_bytes.to_vec();

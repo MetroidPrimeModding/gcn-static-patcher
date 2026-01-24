@@ -1,21 +1,21 @@
-use std::fs;
-use std::io::{Cursor, Seek, SeekFrom};
-use anyhow::Result;
-use std::path::PathBuf;
-use log::info;
-use md5::Digest;
 use crate::binstream::{BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use crate::dol::DolHeader;
 use crate::gcdisc::{FSTEntry, GCDiscHeader, FST};
-use crate::patch_config::PatchConfig;
+use crate::patch_config::ModData;
 use crate::patch_dol::patch_dol;
 use crate::progress::Progress;
+use anyhow::Result;
+use log::info;
+use md5::Digest;
+use std::fs;
+use std::io::{Cursor, Seek, SeekFrom};
+use std::path::PathBuf;
 
 pub fn patch_iso_file<F>(
   progress_update: F,
   in_path: &PathBuf,
   out_path: &PathBuf,
-  config: &PatchConfig,
+  mod_data: &ModData,
 ) -> Result<()> where
   F: Fn(Progress),
 {
@@ -27,7 +27,7 @@ pub fn patch_iso_file<F>(
   let input_file = fs::File::open(in_path)?;
   let input_file_mmap = unsafe { memmap2::MmapOptions::new().map(&input_file)? };
 
-  if let Some(expected_iso_hash) = config.expected_iso_hash.clone() {
+  if let Some(expected_iso_hash) = mod_data.config.expected_iso_hash.clone() {
     info!("Verifying input ISO hash...");
     let mut hasher = md5::Md5::new();
     // Read the file in chunks to avoid high memory usage
@@ -87,10 +87,7 @@ pub fn patch_iso_file<F>(
   let unpatched_dol_bytes = &input_file_mmap[header.dol_offset as usize..(header.dol_offset + dol_length) as usize];
 
   info!("Patching dol...");
-  let mod_path = std::env::current_dir()?
-    .join(&config.mod_file);
-  let mod_bytes = fs::read(mod_path)?;
-  let patched_dol_bytes = patch_dol(&mod_bytes, unpatched_dol_bytes, &config)?;
+  let patched_dol_bytes = patch_dol(&mod_data, unpatched_dol_bytes)?;
 
   info!("Finding a suitable gap...");
   let file_ranges = fst.root.get_ranges();
@@ -160,7 +157,7 @@ pub fn patch_iso_file<F>(
   info!("Patching header...");
   // write new string to the start of the game name
   Cursor::new(&mut header.game_name[..])
-    .write_string(&config.game_name)?;
+    .write_string(&mod_data.config.game_name)?;
   header.dol_offset = mod_dol_offset;
   header.fst_offset = fst_offset as u32; // didn't actually move, but to be safe
   header.fst_size = fst_size as u32;
@@ -172,7 +169,8 @@ pub fn patch_iso_file<F>(
   output_file_mmap[dol_offset..dol_offset + patched_dol_bytes.len()]
     .copy_from_slice(&patched_dol_bytes);
 
-  if let Some(bnr_name) = &config.bnr_file {
+  // TODO: load this from the elf
+  if let Some(bnr_name) = &mod_data.config.bnr_file {
     info!("Patching bnr...");
     let bnr_path = std::env::current_dir()?
       .join(bnr_name);

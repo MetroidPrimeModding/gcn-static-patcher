@@ -2,7 +2,7 @@
 .venv
 *.dol
 *.elf
-prime-practice
+mod.elf
 /.idea
 *.iso
 .DS_Store

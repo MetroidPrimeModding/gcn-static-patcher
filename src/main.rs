@@ -11,22 +11,28 @@ mod binstream;
 mod gcdisc;
 mod patch_config;
 
-use anyhow::Result;
-use eframe;
-use eframe::egui;
-use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
-use log::{error, info};
-use clap::Parser;
-use crate::patch_config::PatchConfig;
+use crate::patch_config::{ModConfig, ModData};
 use crate::patch_dol::patch_dol_file;
 use crate::patch_iso::patch_iso_file;
 use crate::progress::Progress;
+use anyhow::Result;
+use clap::Parser;
+use eframe;
+use eframe::egui;
+use log::{error, info};
+use object::{Object, ObjectSection};
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::{fs, thread};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+  /// Mod file path (.elf)
+  /// If not provided, will look for "mod.elf" in the app directory.
+  #[arg(short, long, value_name = "FILE", default_value = "mod.elf")]
+  mod_file: PathBuf,
+
   /// Input file to patch (.dol or .iso)
   /// If provided, the app will run in CLI mode and exit after patching.
   #[arg(short, long, value_name = "FILE")]
@@ -46,29 +52,20 @@ fn main() -> Result<()> {
     .filter_level(log::LevelFilter::Info)
     .init();
 
-  let app_dir = find_app_dir();
-  info!("App directory: {:?}", app_dir);
-  std::env::set_current_dir(&app_dir)?;
-
   let args = Args::parse();
 
   // load from patcher_config.toml
-  let mut patch_config: PatchConfig = {
-    let config_str = std::fs::read_to_string("patcher_config.toml")
-      .map_err(|e| anyhow::anyhow!("Failed to read patcher_config.toml: {}", e))?;
-    toml::from_str(&config_str)
-      .map_err(|e| anyhow::anyhow!("Failed to parse patcher_config.toml: {}", e))?
-  };
+  let mut patch_config: ModData = load_patch_data(&args)?;
 
   // Override output path if provided via CLI
   if let Some(output_path) = &args.output_file {
-    patch_config.output_path_override = Some(output_path.clone());
+    patch_config.config.output_path_override = Some(output_path.clone());
   }
 
   if let Some(input_path) = args.input_file {
     if args.ignore_hash {
-      patch_config.expected_iso_hash = None;
-      patch_config.expected_dol_hash = None;
+      patch_config.config.expected_iso_hash = None;
+      patch_config.config.expected_dol_hash = None;
     }
     run_cli(&input_path, &patch_config)?;
   } else {
@@ -76,6 +73,47 @@ fn main() -> Result<()> {
   }
 
   Ok(())
+}
+
+fn load_patch_data(args: &Args) -> Result<ModData> {
+  let mut mod_path = std::env::current_dir()?
+    .join(&args.mod_file);
+
+  if !mod_path.exists() {
+    let app_dir = find_app_dir();
+    mod_path = app_dir.join(&args.mod_file);
+  }
+
+  if !mod_path.exists() {
+    return Err(anyhow::anyhow!("Mod file not found: {:?}", mod_path));
+  }
+
+  // if the mod .elf exists, load from the section ".patcher_config" inside the ELF
+  info!("Loading patcher config from ELF section");
+  let elf_bytes = fs::read(&mod_path)
+    .map_err(|e| anyhow::anyhow!("Failed to read mod ELF file: {}", e))?;
+  let elf_file = object::File::parse(&*elf_bytes)
+    .map_err(|e| anyhow::anyhow!("Failed to parse mod ELF file: {}", e))?;
+  if let Some(section) = elf_file.section_by_name(".patcher_config") {
+    // this is a PT_NOTE section containing the TOML config
+
+
+    let patcher_config_section = section.data()
+      .map_err(|e| anyhow::anyhow!("Failed to read .patcher_config section data: {}", e))?;
+    info!("deb: {:?}", section.kind());
+
+    let config_str = std::str::from_utf8(patcher_config_section)
+      .map_err(|e| anyhow::anyhow!("Failed to parse .patcher_config section as UTF-8: {}", e))?;
+    let config = toml::from_str(config_str)
+      .map_err(|e| anyhow::anyhow!("Failed to parse patcher config from ELF section: {}", e))?;
+
+    Ok(ModData {
+      elf_bytes,
+      config,
+    })
+  } else {
+    Err(anyhow::anyhow!(".patcher_config section not found in mod ELF"))
+  }
 }
 
 /// Returns the directory containing the executable. On macOS bundles, this will return the directory containing the .app bundle.
@@ -104,7 +142,7 @@ fn find_app_dir() -> PathBuf {
   }
 }
 
-fn run_cli(input_path: &PathBuf, patch_config: &PatchConfig) -> Result<()> {
+fn run_cli(input_path: &PathBuf, patch_config: &ModData) -> Result<()> {
   info!("Running in CLI mode. Input file: {:?}", input_path);
   let (progress_tx, progress_rx) = mpsc::channel();
 
@@ -137,7 +175,7 @@ fn run_cli(input_path: &PathBuf, patch_config: &PatchConfig) -> Result<()> {
   }
 }
 
-fn run_gui(args: &Args, patch_config: PatchConfig) -> Result<()> {
+fn run_gui(args: &Args, patch_config: ModData) -> Result<()> {
   info!("Running in GUI mode.");
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
@@ -158,7 +196,8 @@ fn run_gui(args: &Args, patch_config: PatchConfig) -> Result<()> {
 }
 
 struct PatcherApp {
-  config: PatchConfig,
+  // TODO: Option<>
+  mod_data: ModData,
   progress: Progress,
   progress_rx: Receiver<Progress>,
   progress_tx: Sender<Progress>,
@@ -166,10 +205,10 @@ struct PatcherApp {
 }
 
 impl PatcherApp {
-  fn new(patch_config: PatchConfig) -> Self {
+  fn new(mod_data: ModData) -> Self {
     let (progress_tx, progress_rx) = mpsc::channel();
     Self {
-      config: patch_config,
+      mod_data,
       progress: Progress::new(0, 0, "Idle".to_string()),
       progress_rx,
       progress_tx,
@@ -186,8 +225,8 @@ impl eframe::App for PatcherApp {
 
     egui::CentralPanel::default().show(ctx, |ui| {
       ui.vertical_centered(|ui| {
-        ui.heading(&self.config.game_name);
-        ui.heading(&self.config.mod_name);
+        ui.heading(&self.mod_data.config.game_name);
+        ui.heading(&self.mod_data.config.mod_name);
         ui.add_space(15.0);
         ui.label("Drag-and-drop a .dol or .iso to patch");
         ui.label("(or select with the button below)");
@@ -244,17 +283,17 @@ impl PatcherApp {
     let path_clone = path.clone();
     let ctx_clone = ctx.clone();
     let progress_tx = self.progress_tx.clone();
-    let mut config_clone = self.config.clone();
+    let mut mod_data_clone = self.mod_data.clone();
     if self.ignore_hash {
-      config_clone.expected_iso_hash = None;
-      config_clone.expected_dol_hash = None;
+      mod_data_clone.config.expected_iso_hash = None;
+      mod_data_clone.config.expected_dol_hash = None;
     }
     // Spawn a new thread to handle the patching
     thread::spawn(move || {
       info!("Starting patch for file: {:?}", path_clone);
       let result = handle_patch_for_file(
         &path_clone,
-        &config_clone,
+        &mod_data_clone,
         &progress_tx,
         || { ctx_clone.request_repaint(); },
       );
@@ -310,7 +349,7 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
 
 fn handle_patch_for_file<F>(
   path: &PathBuf,
-  config: &PatchConfig,
+  mod_data: &ModData,
   progress_tx: &Sender<Progress>,
   request_ui_update: F,
 ) -> Result<PathBuf> where
@@ -319,8 +358,8 @@ fn handle_patch_for_file<F>(
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
-      let out_path = config.output_path_override.clone()
-        .unwrap_or_else(|| path.with_file_name(&config.output_name_dol));
+      let out_path = mod_data.config.output_path_override.clone()
+        .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_dol));
       patch_dol_file(
         |new_progress| {
           let _ = progress_tx.send(new_progress);
@@ -328,13 +367,13 @@ fn handle_patch_for_file<F>(
         },
         path,
         &out_path,
-        &config,
+        &mod_data,
       )?;
       Ok(out_path)
     } else if ext == "iso" || ext == "gcm" {
       info!("Patching ISO file: {:?}", path);
-      let out_path = config.output_path_override.clone()
-        .unwrap_or_else(|| path.with_file_name(&config.output_name_iso));
+      let out_path = mod_data.config.output_path_override.clone()
+        .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_iso));
       patch_iso_file(
         |new_progress| {
           let _ = progress_tx.send(new_progress);
@@ -342,7 +381,7 @@ fn handle_patch_for_file<F>(
         },
         path,
         &out_path,
-        config,
+        mod_data,
       )?;
       Ok(out_path)
     } else {

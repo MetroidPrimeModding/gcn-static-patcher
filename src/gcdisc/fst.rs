@@ -1,7 +1,7 @@
+use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use anyhow::Result;
 use std::fmt::{Debug, Formatter};
 use std::io::SeekFrom;
-use anyhow::Result;
-use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 #[derive(Clone)]
 pub enum FSTEntry {

@@ -1,13 +1,10 @@
 # Example configuration for GCN Static Patcher
 game_name = "Metroid Prime 2: Echoes"
 mod_name = "Echoes Practice Mod"
+version = "0.0.1"
 # optional; if not present, hash check is skipped
 expected_iso_hash = "ce781ad1452311ca86667cf8dbd7d112"
 expected_dol_hash = "c0a39215dcb3fa9affb0f208c9f78a7c"
-# Name of the static .elf file containing the mod
-mod_file = "prime-practice"
-# optional; if not present, no BNR will be used
-bnr_file = "opening_practice.bnr"
 # Default output ISO name
 output_name_iso = "prime2-practice-mod.iso"
 # Default output DOL name

@@ -32,8 +32,12 @@ fn main() -> eframe::Result {
   // TODO: load this from a file
   let patch_config = PatchConfig {
     game_name: "Metroid Prime 2: Echoes".to_string(),
-    mod_name: "Practice Mod".to_string(),
-    expected_hash: Some("ce781ad1452311ca86667cf8dbd7d112".to_string()),
+    mod_name: "Echoes Practice Mod".to_string(),
+    // expected_hash: Some("ce781ad1452311ca86667cf8dbd7d112".to_string()),
+    expected_hash: None,
+    output_name: "prime2-practice-mod.iso".to_string(),
+    mod_file: "prime-practice".to_string(),
+    bnr_file: Some("python/opening_practice.bnr".to_string()),
   };
 
   let options = eframe::NativeOptions {
@@ -132,6 +136,8 @@ impl PatcherApp {
         progress_tx,
         &ctx_clone,
       );
+      // TODO: when done, send back to the UI.
+      // If an error, it might be "ignore hash?"
       match result {
         Ok(_) => info!("Successfully patched file: {:?}", path_clone),
         Err(e) => error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace()),
@@ -180,7 +186,12 @@ fn handle_patch_for_file(
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
-      let out_path = path.with_file_name("default_mod.dol");
+      let out_path = path.with_file_name(format!(
+        "{}_mod.dol",
+        path.file_stem()
+          .and_then(|s| s.to_str())
+          .unwrap_or("output")
+      ));
       // mod is at cwd/prime-practice
       let mod_path = std::env::current_dir()?.join("prime-practice");
       patch_dol_file(
@@ -190,8 +201,7 @@ fn handle_patch_for_file(
         },
         path,
         &out_path,
-        &mod_path,
-        false,
+        &config,
       )?;
     } else if ext == "iso" || ext == "gcm" {
       info!("Patching ISO file: {:?}", path);
@@ -201,8 +211,7 @@ fn handle_patch_for_file(
           ctx.request_repaint();
         },
         path,
-        &path.with_file_name("prime-practice-mod.iso"),
-        &std::env::current_dir()?.join("prime-practice"),
+        &path.with_file_name(&config.output_name),
         config,
       )?;
     } else {

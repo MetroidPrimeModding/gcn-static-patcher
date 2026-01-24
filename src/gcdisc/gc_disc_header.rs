@@ -24,6 +24,18 @@ pub struct GCDiscHeader {
   pub unused_4: u32,
 }
 
+impl GCDiscHeader {
+  pub fn name_string(&self) -> String {
+    // format: <code decoded as ascii><maker_code decoded as ascii>: <game_name decoded as ascii, trimmed>
+    let code_str = String::from_utf8_lossy(&self.code.to_be_bytes()).to_string();
+    let maker_code_str = String::from_utf8_lossy(&self.maker_code.to_be_bytes()).to_string();
+    let game_name_str = String::from_utf8_lossy(&self.game_name)
+      .trim_end_matches(char::from(0))
+      .to_string();
+    format!("{}{}: {}", code_str, maker_code_str, game_name_str)
+  }
+}
+
 impl BinStreamReadable for GCDiscHeader {
   fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<Self> {
     let code = stream.read_u32()?;

@@ -18,6 +18,19 @@ pub struct SectionInfo {
   pub size: u32,
 }
 
+impl DolHeader {
+  pub fn total_length(&self) -> u32 {
+    let mut max_end = 0;
+    for seg in self.text.iter().chain(self.data.iter()) {
+      let end = seg.offset + seg.size;
+      if end > max_end {
+        max_end = end;
+      }
+    }
+    max_end
+  }
+}
+
 impl Debug for DolHeader {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     writeln!(f, "DOL Header:")?;

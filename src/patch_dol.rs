@@ -8,13 +8,13 @@ use crate::dol::DolHeader;
 use crate::progress::Progress;
 use std::io;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use crate::patch_config::PatchConfig;
 
 pub fn patch_dol_file<F>(
   progress_update: F,
   in_path: &PathBuf,
   out_path: &PathBuf,
-  mod_path: &PathBuf,
-  ignore_hash: bool,
+  config: &PatchConfig,
 ) -> Result<()> where F: Fn(Progress) {
   progress_update(Progress::new(0, 4, "Reading DOL".to_string()));
   info!("Preparing to patch DOL file...");
@@ -23,7 +23,11 @@ pub fn patch_dol_file<F>(
   info!("Read DOL file: {} bytes", dol_bytes.len());
 
   progress_update(Progress::new(1, 4, "Patching DOL".to_string()));
-  let out_bytes = patch_dol(mod_path, &dol_bytes)?;
+  // path is relative to the executable
+  let mod_path = std::env::current_dir()?
+    .join(&config.mod_file);
+  let mod_bytes = fs::read(mod_path)?;
+  let out_bytes = patch_dol(&mod_bytes, &dol_bytes)?;
 
   progress_update(Progress::new(3, 4, "Writing DOL".to_string()));
   info!("Writing patched DOL file to {:?}", out_path);
@@ -35,12 +39,11 @@ pub fn patch_dol_file<F>(
   Ok(())
 }
 
-fn patch_dol(mod_path: &PathBuf, dol_bytes: &Vec<u8>) -> Result<Vec<u8>> {
+pub fn patch_dol(mod_bytes: &[u8], dol_bytes: &[u8]) -> Result<Vec<u8>> {
   let mut dol_header = DolHeader::read_from_stream(&mut io::Cursor::new(dol_bytes))?;
   info!("DOL Header: {:?}", dol_header);
 
-  let binary_data = fs::read(mod_path)?;
-  let mod_file = object::File::parse(&*binary_data)?;
+  let mod_file = object::File::parse(mod_bytes)?;
 
   let symbol_map = mod_file.symbols()
     .filter_map(|sym| {
@@ -77,7 +80,7 @@ fn patch_dol(mod_path: &PathBuf, dol_bytes: &Vec<u8>) -> Result<Vec<u8>> {
     .ok_or_else(|| anyhow::anyhow!("Missing symbol PPCSetFpIEEEMode"))?
     .address();
 
-  let mut output_bytes = dol_bytes.clone();
+  let mut output_bytes = dol_bytes.to_vec();
 
   for segment in mod_file.segments() {
     // find the sections that are part of this segment

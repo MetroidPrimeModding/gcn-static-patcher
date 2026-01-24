@@ -1,18 +1,19 @@
 use std::fmt::{Debug, Formatter};
 use std::io::SeekFrom;
+use anyhow::Result;
 use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 #[derive(Clone)]
 pub enum FSTEntry {
   Directory {
     name: String,
-    children: Option<Vec<FSTEntry>>,
+    children: Vec<FSTEntry>,
   },
   File {
     name: String,
-    offset: Option<u32>,
-    length: Option<u32>,
-  }
+    offset: u32,
+    length: u32,
+  },
 }
 
 #[derive(Clone)]
@@ -35,16 +36,14 @@ impl Debug for FST {
 }
 
 impl FSTEntry {
-  fn print(&self, parents: &Vec<&str>, f: &mut Formatter<'_>) -> std::fmt::Result {
+  pub fn print(&self, parents: &Vec<&str>, f: &mut Formatter<'_>) -> std::fmt::Result {
     let mut path_parts = parents.clone();
     match self {
       FSTEntry::Directory { name, children } => {
         path_parts.push(name);
         writeln!(f, "{}/", path_parts.join("/"))?;
-        if let Some(children) = children {
-          for child in children {
-            child.print(&path_parts, f)?;
-          }
+        for child in children {
+          child.print(&path_parts, f)?;
         }
         Ok(())
       }
@@ -54,7 +53,7 @@ impl FSTEntry {
           f,
           "{} {:08X} {:?}",
           path_parts.join("/"),
-          offset.unwrap_or(0),
+          offset,
           length
         )
       }
@@ -65,23 +64,19 @@ impl FSTEntry {
     let mut ranges = Vec::new();
     match self {
       FSTEntry::Directory { children, .. } => {
-        if let Some(children) = children {
-          for child in children {
-            ranges.extend(child.get_ranges());
-          }
+        for child in children {
+          ranges.extend(child.get_ranges());
         }
       }
       FSTEntry::File { offset, length, .. } => {
-        if let (Some(off), Some(len)) = (offset, length) {
-          ranges.push((*off, *off + *len));
-        }
+        ranges.push((*offset, *offset + *length));
       }
     }
     ranges.sort_by_key(|a| a.0);
     ranges
   }
 
-  pub fn find(&self, path: &[&str]) -> Option<&FSTEntry> {
+  pub fn find_mut(&mut self, path: &[&str]) -> Option<&mut FSTEntry> {
     if path.is_empty() {
       return None;
     }
@@ -92,11 +87,9 @@ impl FSTEntry {
         if head != name {
           return None;
         }
-        if let Some(children) = children {
-          for child in children {
-            if let Some(found) = child.find(tail) {
-              return Some(found);
-            }
+        for child in children {
+          if let Some(found) = child.find_mut(tail) {
+            return Some(found);
           }
         }
         None
@@ -115,14 +108,22 @@ impl FSTEntry {
     match self {
       FSTEntry::Directory { children, .. } => {
         let mut count = 1; // count the directory itself
-        if let Some(children) = children {
-          for child in children {
-            count += child.count();
-          }
+        for child in children {
+          count += child.count();
         }
         count
       }
       FSTEntry::File { .. } => 1,
+    }
+  }
+
+  pub fn add_child(&mut self, child: FSTEntry) -> Result<()> {
+    match self {
+      FSTEntry::Directory { children, .. } => {
+        children.push(child);
+        Ok(())
+      }
+      FSTEntry::File { .. } => Err(anyhow::anyhow!("Cannot add child to a file entry"))
     }
   }
 }
@@ -187,13 +188,13 @@ impl BinStreamReadable for FST {
           }
           FSTEntry::Directory {
             name: name.clone(),
-            children: Some(built_children),
+            children: built_children,
           }
         }
         TempNode::File { name, offset, length } => FSTEntry::File {
           name: name.clone(),
-          offset: Some(*offset),
-          length: Some(*length),
+          offset: *offset,
+          length: *length,
         },
       }
     }
@@ -319,44 +320,42 @@ impl BinStreamWritable for FST {
           write_u32_at(stream, base, my_byte_offset + 0x0, dir_header)?;
           if let Some(parent) = parent_index {
             write_u32_at(stream, base, my_byte_offset + 0x4, parent)?;
-            let child_count = children.as_ref().map_or(0u32, |c| c.len() as u32);
+            let child_count = children.iter().map(|c| c.count()).sum::<u32>();
             write_u32_at(stream, base, my_byte_offset + 0x8, my_offset + child_count + 1)?;
           } else {
             write_u32_at(stream, base, my_byte_offset + 0x4, 0)?;
             write_u32_at(stream, base, my_byte_offset + 0x8, total_count)?;
           }
 
-          if let Some(children) = children {
-            for child in children.iter().filter(|c| matches!(c, FSTEntry::File { .. })) {
-              write_entry(
-                child,
-                stream,
-                base,
-                string_table_start,
-                file_offset,
-                string_offset,
-                Some(my_offset),
-                total_count,
-              )?;
-            }
-            for child in children.iter().filter(|c| matches!(c, FSTEntry::Directory { .. })) {
-              write_entry(
-                child,
-                stream,
-                base,
-                string_table_start,
-                file_offset,
-                string_offset,
-                Some(my_offset),
-                total_count,
-              )?;
-            }
+          for child in children.iter().filter(|c| matches!(c, FSTEntry::File { .. })) {
+            write_entry(
+              child,
+              stream,
+              base,
+              string_table_start,
+              file_offset,
+              string_offset,
+              Some(my_offset),
+              total_count,
+            )?;
+          }
+          for child in children.iter().filter(|c| matches!(c, FSTEntry::Directory { .. })) {
+            write_entry(
+              child,
+              stream,
+              base,
+              string_table_start,
+              file_offset,
+              string_offset,
+              Some(my_offset),
+              total_count,
+            )?;
           }
         }
         FSTEntry::File { offset, length, .. } => {
           write_u32_at(stream, base, my_byte_offset + 0x0, name_offset)?;
-          write_u32_at(stream, base, my_byte_offset + 0x4, offset.unwrap_or(0))?;
-          write_u32_at(stream, base, my_byte_offset + 0x8, length.unwrap_or(0))?;
+          write_u32_at(stream, base, my_byte_offset + 0x4, *offset)?;
+          write_u32_at(stream, base, my_byte_offset + 0x8, *length)?;
         }
       }
 

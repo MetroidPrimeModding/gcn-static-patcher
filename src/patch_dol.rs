@@ -7,7 +7,7 @@ use crate::dol::DolHeader;
 use crate::progress::Progress;
 use std::io;
 use md5::Digest;
-use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use crate::patch_config::PatchConfig;
 
 pub fn patch_dol_file<F>(

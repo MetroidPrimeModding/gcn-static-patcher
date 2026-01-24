@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use log::info;
 use md5::Digest;
-use crate::binser::binstream::{BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use crate::binstream::{BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use crate::dol::DolHeader;
 use crate::gcdisc::{FSTEntry, GCDiscHeader, FST};
 use crate::patch_config::PatchConfig;

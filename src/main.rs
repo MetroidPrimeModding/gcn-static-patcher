@@ -7,7 +7,7 @@ mod patch_iso;
 mod patch_dol;
 mod progress;
 mod dol;
-mod binser;
+mod binstream;
 mod gcdisc;
 mod patch_config;
 

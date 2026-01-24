@@ -1,4 +1,4 @@
-use crate::binser::binstream::{BinStreamReadable, BinStreamWritable};
+use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use std::fmt;
 use std::fmt::Debug;
 
@@ -74,7 +74,7 @@ impl Debug for DolHeader {
 }
 
 impl BinStreamReadable for DolHeader {
-  fn read_from_stream<T: crate::binser::binstream::BinStreamRead>(
+  fn read_from_stream<T: BinStreamRead>(
     stream: &mut T,
   ) -> std::io::Result<Self> {
     let mut text_offsets = Vec::with_capacity(7);
@@ -120,7 +120,7 @@ impl BinStreamReadable for DolHeader {
 }
 
 impl BinStreamWritable for DolHeader {
-  fn write_to_stream<T: crate::binser::binstream::BinStreamWrite>(
+  fn write_to_stream<T: BinStreamWrite>(
     &self,
     stream: &mut T,
   ) -> std::io::Result<()> {

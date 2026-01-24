@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io::SeekFrom;
 use anyhow::Result;
-use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 #[derive(Clone)]
 pub enum FSTEntry {
@@ -129,8 +129,8 @@ impl FSTEntry {
 }
 
 impl BinStreamReadable for FST {
-  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<Self> {
-    fn read_entry_data<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<FSTEntryData> {
+  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> std::io::Result<Self> {
+    fn read_entry_data<T: BinStreamRead>(stream: &mut T) -> std::io::Result<FSTEntryData> {
       let name_and_type = stream.read_u32()?;
       let directory = (name_and_type & 0xFF00_0000) != 0;
       let filename = name_and_type & 0x00FF_FFFF;
@@ -150,7 +150,7 @@ impl BinStreamReadable for FST {
       base: u64,
       offset: u32,
       max_len: usize,
-    ) -> crate::binser::binstream::Result<String> {
+    ) -> crate::binstream::Result<String> {
       let current_pos = stream.seek(SeekFrom::Current(0))?;
       stream.seek(SeekFrom::Start(base + offset as u64))?;
       let mut buf = Vec::new();
@@ -277,13 +277,13 @@ impl BinStreamReadable for FST {
 }
 
 impl BinStreamWritable for FST {
-  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> crate::binser::binstream::Result<()> {
+  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> std::io::Result<()> {
     fn write_u32_at<T: BinStreamWrite>(
       stream: &mut T,
       base: u64,
       offset: u64,
       value: u32,
-    ) -> crate::binser::binstream::Result<()> {
+    ) -> std::io::Result<()> {
       stream.seek(SeekFrom::Start(base + offset))?;
       stream.write_u32(value)?;
       Ok(())
@@ -298,7 +298,7 @@ impl BinStreamWritable for FST {
       string_offset: &mut u32,
       parent_index: Option<u32>,
       total_count: u32,
-    ) -> crate::binser::binstream::Result<()> {
+    ) -> std::io::Result<()> {
       let name = match entry {
         FSTEntry::Directory { name, .. } => name,
         FSTEntry::File { name, .. } => name,
@@ -386,7 +386,7 @@ impl BinStreamWritable for FST {
 }
 
 impl BinStreamReadable for FSTEntryData {
-  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<Self> {
+  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> std::io::Result<Self> {
     let directory = stream.read_u8()? != 0;
     let filename = stream.read_u32()? & 0x00FF_FFFF;
     let offset = stream.read_u32()?;
@@ -402,7 +402,7 @@ impl BinStreamReadable for FSTEntryData {
 }
 
 impl BinStreamWritable for FSTEntryData {
-  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> crate::binser::binstream::Result<()> {
+  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> std::io::Result<()> {
     let dir_byte = if self.directory { 1u8 } else { 0u8 };
     stream.write_u8(dir_byte)?;
     stream.write_u32(self.filename)?;

@@ -1,4 +1,4 @@
-use crate::binser::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
+use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 
 #[derive(Clone, Debug)]
 pub struct GCDiscHeader {
@@ -37,7 +37,7 @@ impl GCDiscHeader {
 }
 
 impl BinStreamReadable for GCDiscHeader {
-  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> crate::binser::binstream::Result<Self> {
+  fn read_from_stream<T: BinStreamRead>(stream: &mut T) -> std::io::Result<Self> {
     let code = stream.read_u32()?;
     let maker_code = stream.read_u16()?;
     let disk_id = stream.read_u8()?;
@@ -85,7 +85,7 @@ impl BinStreamReadable for GCDiscHeader {
 }
 
 impl BinStreamWritable for GCDiscHeader {
-  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> crate::binser::binstream::Result<()> {
+  fn write_to_stream<T: BinStreamWrite>(&self, stream: &mut T) -> std::io::Result<()> {
     stream.write_u32(self.code)?;
     stream.write_u16(self.maker_code)?;
     stream.write_u8(self.disk_id)?;

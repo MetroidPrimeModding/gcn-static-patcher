@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{Cursor, Seek, SeekFrom};
 use anyhow::Result;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use log::info;
 use md5::Digest;
 use crate::binser::binstream::{BinStreamReadable, BinStreamWritable, BinStreamWrite};
@@ -100,7 +99,7 @@ pub fn patch_iso_file<F>(
   let mut chosen_gap: Option<(u32, u32)> = None;
   for gap in gaps {
     let gap_size = gap.1 - gap.0;
-    if gap_size >= patched_dol_bytes.len() as u32 {
+    if gap_size >= search_size {
       chosen_gap = Some(gap);
       break;
     }

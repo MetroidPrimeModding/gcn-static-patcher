@@ -1,7 +1,6 @@
 use std::fs;
 use anyhow::Result;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use log::info;
 use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 use crate::dol::DolHeader;

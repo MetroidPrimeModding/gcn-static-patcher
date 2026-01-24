@@ -38,6 +38,9 @@ pub struct Args {
   /// Ignore hash check (may not work correctly)
   #[arg(long)]
   pub ignore_hash: bool,
+  /// Overwrite existing output files
+  #[arg(long)]
+  pub overwrite: bool,
 }
 
 pub fn load_mod_data(mod_path: PathBuf) -> Result<ModData> {
@@ -66,6 +69,8 @@ pub fn load_mod_data(mod_path: PathBuf) -> Result<ModData> {
     Ok(ModData {
       elf_bytes,
       config,
+      overwrite_output: false,
+      output_path_override: None,
     })
   } else {
     Err(anyhow::anyhow!(".patcher_config section not found in mod ELF"))
@@ -108,8 +113,9 @@ pub fn run_cli_mode(args: &Args, mut mod_data: ModData) -> Result<()> {
     mod_data.config.expected_dol_hash = None;
   }
   if let Some(output_path) = &args.output_file {
-    mod_data.config.output_path_override = Some(output_path.clone());
+    mod_data.output_path_override = Some(output_path.clone());
   }
+  mod_data.overwrite_output = args.overwrite;
 
   run_cli(input_path, &Some(mod_data))
 }
@@ -163,7 +169,7 @@ pub fn handle_patch_for_file<F>(
     let Some(mod_data) = mod_data else {
       return Err(anyhow::anyhow!("No mod data loaded to patch DOL"));
     };
-    let out_path = mod_data.config.output_path_override.clone()
+    let out_path = mod_data.output_path_override.clone()
       .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_dol));
     patch_dol_file(
       progres_fn,
@@ -177,7 +183,7 @@ pub fn handle_patch_for_file<F>(
       return Err(anyhow::anyhow!("No mod data loaded to patch DOL"));
     };
     info!("Patching ISO file: {:?}", path);
-    let out_path = mod_data.config.output_path_override.clone()
+    let out_path = mod_data.output_path_override.clone()
       .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_iso));
     patch_iso_file(
       progres_fn,

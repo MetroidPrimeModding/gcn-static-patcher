@@ -16,7 +16,7 @@ pub fn patch_dol_file<F>(
   out_path: &PathBuf,
   mod_data: &ModData,
 ) -> Result<()> where F: Fn(Progress) {
-  if out_path.exists() {
+  if !mod_data.overwrite_output && out_path.exists() {
     return Err(anyhow::anyhow!("Output file already exists: {:?}", out_path));
   }
 

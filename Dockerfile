@@ -8,4 +8,4 @@ ARG TARGETARCH
 COPY dist/gcn-static-patcher-cli-${TARGETARCH} /usr/local/bin/gcn-static-patcher-cli
 RUN chmod +x /usr/local/bin/gcn-static-patcher-cli
 
-ENTRYPOINT ["gcn-static-patcher-cli"]
+ENTRYPOINT ["/usr/local/bin/gcn-static-patcher-cli"]

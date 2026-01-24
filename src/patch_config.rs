@@ -5,6 +5,11 @@ use std::path::PathBuf;
 pub struct ModData {
   pub elf_bytes: Vec<u8>,
   pub config: ModConfig,
+  /// Whether to overwrite output files if they already exist
+  pub overwrite_output: bool,
+  /// This will override the output path for both ISO and DOL outputs
+  /// Specified via CLI only
+  pub output_path_override: Option<PathBuf>,
 }
 
 impl ModData {
@@ -31,10 +36,6 @@ pub struct ModConfig {
   #[serde(default)]
   pub branch_patches: Vec<PatchBranchConfig>,
 
-  /// This will override the output path for both ISO and DOL outputs
-  /// Specified via CLI only
-  #[serde(skip, default)]
-  pub output_path_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

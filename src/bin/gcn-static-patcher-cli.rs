@@ -1,13 +1,26 @@
 use anyhow::Result;
 use clap::Parser;
-use gcn_static_patcher::{load_mod_data, run_cli_mode, Args};
+use gcn_static_patcher::{find_app_dir, load_mod_data, run_cli_mode, Args};
 
 fn main() -> Result<()> {
   // Initialize logging
-  env_logger::Builder::from_default_env()
-    .target(env_logger::Target::Stdout)
-    .filter_level(log::LevelFilter::Info)
-    .init();
+  let log_file_path = find_app_dir().join("patcher.log");
+  println!("Log file path: {:?}", log_file_path);
+  fern::Dispatch::new()
+    .format(|out, message, record| {
+      out.finish(format_args!(
+        "{}[{}][{}] {}",
+        chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+        record.target(),
+        record.level(),
+        message
+      ))
+    })
+    .level(log::LevelFilter::Info)
+    .chain(std::io::stdout())
+    .chain(fern::log_file(log_file_path)?)
+    .apply()?;
+
 
   let args = Args::parse();
 

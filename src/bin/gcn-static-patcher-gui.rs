@@ -25,10 +25,22 @@ use gcn_static_patcher::{
 
 fn main() -> Result<()> {
   // Initialize logging
-  env_logger::Builder::from_default_env()
-    .target(env_logger::Target::Stdout)
-    .filter_level(log::LevelFilter::Info)
-    .init();
+  let log_file_path = find_app_dir().join("patcher.log");
+  println!("Log file path: {:?}", log_file_path);
+  fern::Dispatch::new()
+    .format(|out, message, record| {
+      out.finish(format_args!(
+        "{}[{}][{}] {}",
+        chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+        record.target(),
+        record.level(),
+        message
+      ))
+    })
+    .level(log::LevelFilter::Info)
+    .chain(std::io::stdout())
+    .chain(fern::log_file(log_file_path)?)
+    .apply()?;
 
   let args = Args::parse();
 
@@ -77,6 +89,7 @@ struct PatcherApp {
   mod_data_rx: Receiver<ModData>,
   mod_data_tx: Sender<ModData>,
   ignore_hash: bool,
+  overwrite_output: bool,
 }
 
 impl PatcherApp {
@@ -84,8 +97,8 @@ impl PatcherApp {
     let (progress_tx, progress_rx) = mpsc::channel();
     let (mod_data_tx, mod_data_rx) = mpsc::channel();
     let ignore_hash = args.ignore_hash;
+    let overwrite_output = args.overwrite;
     Self {
-      // args,
       mod_data,
       progress: Progress::new(0, 0, "Idle".to_string()),
       progress_rx,
@@ -93,6 +106,7 @@ impl PatcherApp {
       mod_data_rx,
       mod_data_tx,
       ignore_hash,
+      overwrite_output,
     }
   }
 }
@@ -116,14 +130,16 @@ impl eframe::App for PatcherApp {
         ui.vertical_centered(|ui| {
           let mod_data = self.mod_data.as_ref().unwrap();
           ui.heading(&mod_data.config.game_name);
-          ui.heading(&mod_data.config.mod_name);
+          ui.heading(format!("{} v{}", &mod_data.config.mod_name, &mod_data.config.version));
           ui.add_space(15.0);
           ui.label("Drag-and-drop a .dol or .iso to patch");
           ui.label("(or select with the button below)");
           ui.add_space(15.0);
           ui.label("The output file will be created next to the input file.");
           ui.add_space(15.0);
+          ui.checkbox(&mut self.overwrite_output, "Overwrite existing");
           ui.checkbox(&mut self.ignore_hash, "Ignore hash check");
+
           if self.ignore_hash {
             ui.colored_label(egui::Color32::from_rgb(200, 20, 20), "Warning: Modified inputs may cause the patch to fail or the game to crash");
           }
@@ -190,6 +206,7 @@ impl PatcherApp {
         mod_data_clone.config.expected_iso_hash = None;
         mod_data_clone.config.expected_dol_hash = None;
       }
+      mod_data_clone.overwrite_output = self.overwrite_output;
     }
 
     // Spawn a new thread to handle the patching

@@ -19,7 +19,7 @@ pub fn patch_iso_file<F>(
 ) -> Result<()> where
   F: Fn(Progress),
 {
-  if out_path.exists() {
+  if !mod_data.overwrite_output && out_path.exists() {
     return Err(anyhow::anyhow!("Output file already exists: {:?}", out_path));
   }
 

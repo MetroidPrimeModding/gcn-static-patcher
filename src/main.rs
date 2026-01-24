@@ -46,6 +46,10 @@ fn main() -> Result<()> {
     .filter_level(log::LevelFilter::Info)
     .init();
 
+  let app_dir = find_app_dir();
+  info!("App directory: {:?}", app_dir);
+  std::env::set_current_dir(&app_dir)?;
+
   let args = Args::parse();
 
   // load from patcher_config.toml
@@ -72,6 +76,32 @@ fn main() -> Result<()> {
   }
 
   Ok(())
+}
+
+/// Returns the directory containing the executable. On macOS bundles, this will return the directory containing the .app bundle.
+fn find_app_dir() -> PathBuf {
+  #[cfg(target_os = "macos")]
+  {
+    use std::path::Path;
+    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    let mut dir = exe_path.parent();
+    while let Some(d) = dir {
+      if d.file_name().and_then(|n| n.to_str()) == Some("MacOS") {
+        if let Some(app_dir) = d.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+          return app_dir.to_path_buf();
+        }
+      }
+      dir = d.parent();
+    }
+    exe_path.parent().unwrap_or(Path::new(".")).to_path_buf()
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    std::env::current_exe()
+      .ok()
+      .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+      .unwrap_or_else(|| PathBuf::from("."))
+  }
 }
 
 fn run_cli(input_path: &PathBuf, patch_config: &PatchConfig) -> Result<()> {

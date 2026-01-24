@@ -1,18 +1,17 @@
-name: Build and Publish patcher Docker Image
+name: docker-build
 
 on:
   workflow_run:
-    workflows: ["compile"]
+    workflows: ["docker-patcher"]
     types: [completed]
 
 permissions:
   contents: read
-  actions: read
   packages: write
 
 env:
   PACKAGE_REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository }}/gcn-static-patcher
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/build
 
 jobs:
   publish:
@@ -21,8 +20,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,32 +40,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download linux/amd64 artifact
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: gcn-static-patcher-ubuntu-24.04
-          path: artifacts/ubuntu-24.04
-
-      - name: Download linux/arm64 artifact
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: gcn-static-patcher-ubuntu-24.04-arm
-          path: artifacts/ubuntu-24.04-arm
-
-      - name: Stage binaries for Docker build
-        run: |
-          mkdir -p dist
-          cp artifacts/ubuntu-24.04/gcn-static-patcher-cli dist/gcn-static-patcher-cli-amd64
-          cp artifacts/ubuntu-24.04-arm/gcn-static-patcher-cli dist/gcn-static-patcher-cli-arm64
-          chmod +x dist/gcn-static-patcher-cli-amd64 dist/gcn-static-patcher-cli-arm64
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile
+          file: Dockerfile-build
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |

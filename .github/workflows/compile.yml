@@ -1,4 +1,4 @@
-name: Compile gcn-static-patcher
+name: compile
 
 on:
   push:

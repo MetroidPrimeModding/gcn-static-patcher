@@ -41,7 +41,7 @@ fn main() -> eframe::Result {
   };
 
   let options = eframe::NativeOptions {
-    viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+    viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
     ..Default::default()
   };
   eframe::run_native(
@@ -89,17 +89,27 @@ impl eframe::App for PatcherApp {
         ui.label("Drag-and-drop a .dol or .iso to patch");
         ui.label("(or select with the button below)");
         ui.add_space(15.0);
-        ui.label("The output file will be created next to the input file");
+        ui.label("The output file will be created next to the input file.");
         ui.add_space(15.0);
         if ui.button("Open file…").clicked() {
           if let Some(path) = rfd::FileDialog::new().pick_file() {
             self.spawn_patch_thread(&path, ctx);
           }
         }
-        // progress bar
+      });
+
+      egui::TopBottomPanel::bottom("progress_bar").show_inside(ui, |ui| {
         ui.add_space(25.0);
         if let Some(description) = &self.progress.description {
-          ui.label(description);
+          ui.vertical_centered(|ui| {
+            if self.progress.error {
+              // set font size larger for the warning icon
+              ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
+              ui.colored_label(egui::Color32::RED, "⚠ Error ⚠");
+              ui.style_mut().override_text_style = None;
+            }
+            ui.label(description);
+          });
         }
         let percentage = self.progress.ratio();
         ui.add(egui::ProgressBar::new(percentage).show_percentage());
@@ -133,14 +143,23 @@ impl PatcherApp {
       let result = handle_patch_for_file(
         &path_clone,
         &config_clone,
-        progress_tx,
+        &progress_tx,
         &ctx_clone,
       );
-      // TODO: when done, send back to the UI.
-      // If an error, it might be "ignore hash?"
       match result {
-        Ok(_) => info!("Successfully patched file: {:?}", path_clone),
-        Err(e) => error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace()),
+        Ok(out_path) => {
+          info!("Successfully patched file: {:?}", out_path);
+          // "Done! <path>"
+          let message = format!("Done! {:?}", out_path);
+          progress_tx.send(Progress::new(1, 1, message)).ok();
+          ctx_clone.request_repaint();
+        }
+        Err(e) => {
+          error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace());
+          let message = format!("{}", e);
+          progress_tx.send(Progress::new_error(message)).ok();
+          ctx_clone.request_repaint();
+        }
       }
     });
   }
@@ -180,9 +199,9 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
 fn handle_patch_for_file(
   path: &PathBuf,
   config: &PatchConfig,
-  progress_tx: Sender<Progress>,
+  progress_tx: &Sender<Progress>,
   ctx: &egui::Context,
-) -> Result<()> {
+) -> Result<PathBuf> {
   if let Some(ext) = path.extension() {
     if ext == "dol" {
       info!("Patching DOL file: {:?}", path);
@@ -203,22 +222,26 @@ fn handle_patch_for_file(
         &out_path,
         &config,
       )?;
+      Ok(out_path)
     } else if ext == "iso" || ext == "gcm" {
       info!("Patching ISO file: {:?}", path);
+      let out_path = path.with_file_name(&config.output_name);
       patch_iso_file(
         |new_progress| {
           let _ = progress_tx.send(new_progress);
           ctx.request_repaint();
         },
         path,
-        &path.with_file_name(&config.output_name),
+        &out_path,
         config,
       )?;
+      Ok(out_path)
     } else {
       error!("Unsupported file type: {:?}", path);
+      Err(anyhow::anyhow!("Unsupported file type: {:?}", ext))
     }
   } else {
     error!("No file extension found for: {:?}", path);
+    Err(anyhow::anyhow!("No file extension found"))
   }
-  Ok(())
 }

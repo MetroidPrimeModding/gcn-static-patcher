@@ -3,6 +3,7 @@ pub struct Progress {
   pub current: u64,
   pub total: u64,
   pub description: Option<String>,
+  pub error: bool,
 }
 
 impl Progress {
@@ -11,6 +12,16 @@ impl Progress {
       current,
       total,
       description: Some(description),
+      error: false,
+    }
+  }
+
+  pub fn new_error(description: String) -> Self {
+    Progress {
+      current: 0,
+      total: 0,
+      description: Some(description),
+      error: true,
     }
   }
 
@@ -29,6 +40,7 @@ impl Default for Progress {
       current: 0,
       total: 0,
       description: None,
+      error: false,
     }
   }
 }

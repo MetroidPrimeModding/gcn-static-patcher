@@ -9,7 +9,7 @@ fi
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
-BINARY_NAME="${BINARY_NAME:-gcn-static-patcher}"
+BINARY_NAME="${BINARY_NAME:-gcn-static-patcher-gui}"
 OUTPUT_DIR="${OUTPUT_DIR:-target/macos-release}"
 BUNDLE_ID="${BUNDLE_ID:-com.example.${BINARY_NAME}}"
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use gcn_static_patcher::{Args, find_app_dir, load_mod_data, run_cli_mode};
+use gcn_static_patcher::{load_mod_data, run_cli_mode, Args};
 
 fn main() -> Result<()> {
   // Initialize logging
@@ -11,7 +11,7 @@ fn main() -> Result<()> {
 
   let args = Args::parse();
 
-  let  mod_path = std::env::current_dir()?
+  let mod_path = std::env::current_dir()?
     .join(&args.mod_file);
 
   let mod_data = load_mod_data(mod_path);

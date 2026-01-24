@@ -1,0 +1,31 @@
+name: build
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Archive binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcn-static-patcher-${{ matrix.os }}
+          path: target/release/gcn-static-patcher*

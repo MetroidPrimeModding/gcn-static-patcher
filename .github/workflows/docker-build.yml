@@ -12,7 +12,7 @@ permissions:
 
 env:
   PACKAGE_REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository }}/build
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/gcn-static-patcher
 
 jobs:
   publish:

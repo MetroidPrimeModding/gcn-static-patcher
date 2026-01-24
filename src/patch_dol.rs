@@ -1,6 +1,6 @@
 use crate::binstream::{BinStreamRead, BinStreamReadable, BinStreamWritable, BinStreamWrite};
 use crate::dol::DolHeader;
-use crate::patch_config::{ModConfig, ModData};
+use crate::patch_config::ModData;
 use crate::progress::Progress;
 use anyhow::Result;
 use log::info;

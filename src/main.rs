@@ -24,6 +24,7 @@ use object::{Object, ObjectSection};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::{fs, thread};
+use std::io::Read;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -54,28 +55,6 @@ fn main() -> Result<()> {
 
   let args = Args::parse();
 
-  // load from patcher_config.toml
-  let mut patch_config: ModData = load_patch_data(&args)?;
-
-  // Override output path if provided via CLI
-  if let Some(output_path) = &args.output_file {
-    patch_config.config.output_path_override = Some(output_path.clone());
-  }
-
-  if let Some(input_path) = args.input_file {
-    if args.ignore_hash {
-      patch_config.config.expected_iso_hash = None;
-      patch_config.config.expected_dol_hash = None;
-    }
-    run_cli(&input_path, &patch_config)?;
-  } else {
-    run_gui(&args, patch_config)?;
-  }
-
-  Ok(())
-}
-
-fn load_patch_data(args: &Args) -> Result<ModData> {
   let mut mod_path = std::env::current_dir()?
     .join(&args.mod_file);
 
@@ -83,7 +62,28 @@ fn load_patch_data(args: &Args) -> Result<ModData> {
     let app_dir = find_app_dir();
     mod_path = app_dir.join(&args.mod_file);
   }
+  let mod_data = load_mod_data(mod_path);
 
+  // load from patcher_config.toml
+  if let Some(input_path) = &args.input_file {
+    let mut mod_data = mod_data?;
+    if args.ignore_hash {
+      mod_data.config.expected_iso_hash = None;
+      mod_data.config.expected_dol_hash = None;
+    }
+    if let Some(output_path) = &args.output_file {
+      mod_data.config.output_path_override = Some(output_path.clone());
+    }
+    run_cli(&input_path, &Some(mod_data))?;
+  } else {
+    let mod_data = mod_data.ok();
+    run_gui(args, mod_data)?;
+  }
+
+  Ok(())
+}
+
+fn load_mod_data(mod_path: PathBuf) -> Result<ModData> {
   if !mod_path.exists() {
     return Err(anyhow::anyhow!("Mod file not found: {:?}", mod_path));
   }
@@ -97,14 +97,13 @@ fn load_patch_data(args: &Args) -> Result<ModData> {
   if let Some(section) = elf_file.section_by_name(".patcher_config") {
     // this is a PT_NOTE section containing the TOML config
 
-
     let patcher_config_section = section.data()
       .map_err(|e| anyhow::anyhow!("Failed to read .patcher_config section data: {}", e))?;
     info!("deb: {:?}", section.kind());
 
     let config_str = std::str::from_utf8(patcher_config_section)
       .map_err(|e| anyhow::anyhow!("Failed to parse .patcher_config section as UTF-8: {}", e))?;
-    let config = toml::from_str(config_str)
+    let config: ModConfig = toml::from_str(config_str)
       .map_err(|e| anyhow::anyhow!("Failed to parse patcher config from ELF section: {}", e))?;
 
     Ok(ModData {
@@ -142,30 +141,24 @@ fn find_app_dir() -> PathBuf {
   }
 }
 
-fn run_cli(input_path: &PathBuf, patch_config: &ModData) -> Result<()> {
+fn run_cli(input_path: &PathBuf, patch_config: &Option<ModData>) -> Result<()> {
   info!("Running in CLI mode. Input file: {:?}", input_path);
-  let (progress_tx, progress_rx) = mpsc::channel();
-
   let result = handle_patch_for_file(
     input_path,
     patch_config,
-    &progress_tx,
     // dummy context for CLI mode
-    || {},
+    |progress| {
+      if let Some(description) = &progress.description {
+        println!("Progress: {:.2}% - {}", progress.ratio() * 100.0, description);
+      } else {
+        println!("Progress: {:.2}%", progress.ratio() * 100.0);
+      }
+    },
   );
 
-  // Print progress updates
-  while let Ok(progress) = progress_rx.recv() {
-    if let Some(description) = &progress.description {
-      println!("Progress: {:.2}% - {}", progress.ratio() * 100.0, description);
-    } else {
-      println!("Progress: {:.2}%", progress.ratio() * 100.0);
-    }
-  }
-
   match result {
-    Ok(out_path) => {
-      println!("Successfully patched file: {:?}", out_path);
+    Ok(result) => {
+      println!("Successfully patched file: {:?}", result);
       Ok(())
     }
     Err(e) => {
@@ -175,7 +168,7 @@ fn run_cli(input_path: &PathBuf, patch_config: &ModData) -> Result<()> {
   }
 }
 
-fn run_gui(args: &Args, patch_config: ModData) -> Result<()> {
+fn run_gui(args: Args, mod_data: Option<ModData>) -> Result<()> {
   info!("Running in GUI mode.");
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
@@ -186,64 +179,91 @@ fn run_gui(args: &Args, patch_config: ModData) -> Result<()> {
     options,
     Box::new(|cc| {
       egui_extras::install_image_loaders(&cc.egui_ctx);
-      let mut app = Box::<PatcherApp>::new(PatcherApp::new(patch_config));
-      if args.ignore_hash {
-        app.ignore_hash = true;
-      }
-      Ok(app)
+      Ok(Box::new(PatcherApp::new(args, mod_data)))
     }),
   ).map_err(|e| anyhow::anyhow!("Failed to start GUI: {}", e))
 }
 
 struct PatcherApp {
-  // TODO: Option<>
-  mod_data: ModData,
+  // args: Args,
+  mod_data: Option<ModData>,
   progress: Progress,
   progress_rx: Receiver<Progress>,
   progress_tx: Sender<Progress>,
+  mod_data_rx: Receiver<ModData>,
+  mod_data_tx: Sender<ModData>,
   ignore_hash: bool,
 }
 
 impl PatcherApp {
-  fn new(mod_data: ModData) -> Self {
+  fn new(args: Args, mod_data: Option<ModData>) -> Self {
     let (progress_tx, progress_rx) = mpsc::channel();
+    let (mod_data_tx, mod_data_rx) = mpsc::channel();
+    let ignore_hash = args.ignore_hash;
     Self {
+      // args,
       mod_data,
       progress: Progress::new(0, 0, "Idle".to_string()),
       progress_rx,
       progress_tx,
-      ignore_hash: false,
+      mod_data_rx,
+      mod_data_tx,
+      ignore_hash,
     }
   }
 }
 
 impl eframe::App for PatcherApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    while let Ok(mod_data) = self.mod_data_rx.try_recv() {
+      self.mod_data = Some(mod_data);
+    }
+
     while let Ok(progress) = self.progress_rx.try_recv() {
       self.progress = progress;
     }
 
     egui::CentralPanel::default().show(ctx, |ui| {
       ui.vertical_centered(|ui| {
-        ui.heading(&self.mod_data.config.game_name);
-        ui.heading(&self.mod_data.config.mod_name);
-        ui.add_space(15.0);
-        ui.label("Drag-and-drop a .dol or .iso to patch");
-        ui.label("(or select with the button below)");
-        ui.add_space(15.0);
-        ui.label("The output file will be created next to the input file.");
-        ui.add_space(15.0);
-        ui.checkbox(&mut self.ignore_hash, "Ignore hash check");
-        if self.ignore_hash {
-          ui.colored_label(egui::Color32::from_rgb(200, 20, 20), "Warning: Modified inputs may cause the patch to fail or the game to crash");
-        }
-        ui.add_space(15.0);
-        if ui.button("Open file…").clicked() {
-          if let Some(path) = rfd::FileDialog::new().pick_file() {
-            self.spawn_patch_thread(&path, ctx);
-          }
-        }
+        ui.heading("GCN Static Patcher");
+        ui.add_space(10.0);
       });
+      if self.mod_data.is_some() {
+        ui.vertical_centered(|ui| {
+          let mod_data = self.mod_data.as_ref().unwrap();
+          ui.heading(&mod_data.config.game_name);
+          ui.heading(&mod_data.config.mod_name);
+          ui.add_space(15.0);
+          ui.label("Drag-and-drop a .dol or .iso to patch");
+          ui.label("(or select with the button below)");
+          ui.add_space(15.0);
+          ui.label("The output file will be created next to the input file.");
+          ui.add_space(15.0);
+          ui.checkbox(&mut self.ignore_hash, "Ignore hash check");
+          if self.ignore_hash {
+            ui.colored_label(egui::Color32::from_rgb(200, 20, 20), "Warning: Modified inputs may cause the patch to fail or the game to crash");
+          }
+          ui.add_space(15.0);
+          if ui.button("Open file…").clicked() {
+            if let Some(path) = rfd::FileDialog::new().pick_file() {
+              self.spawn_patch_thread(&path, ctx);
+            }
+          }
+        });
+      } else {
+        ui.vertical_centered(|ui| {
+          ui.heading("No mod loaded");
+          ui.add_space(15.0);
+          ui.label("Drag-and-drop a mod file");
+          ui.label("(or select with the button below)");
+          ui.add_space(15.0);
+          if ui.button("Open file…").clicked() {
+            if let Some(path) = rfd::FileDialog::new().pick_file() {
+              self.spawn_patch_thread(&path, ctx);
+            }
+          }
+        });
+      }
 
       egui::TopBottomPanel::bottom("progress_bar").show_inside(ui, |ui| {
         ui.add_space(25.0);
@@ -280,30 +300,44 @@ impl eframe::App for PatcherApp {
 impl PatcherApp {
   fn spawn_patch_thread(&mut self, path: &PathBuf, ctx: &egui::Context) {
     info!("File dropped, spawning patch thread: {:?}", path);
-    let path_clone = path.clone();
-    let ctx_clone = ctx.clone();
-    let progress_tx = self.progress_tx.clone();
     let mut mod_data_clone = self.mod_data.clone();
-    if self.ignore_hash {
-      mod_data_clone.config.expected_iso_hash = None;
-      mod_data_clone.config.expected_dol_hash = None;
+    if let Some(mod_data_clone) = &mut mod_data_clone {
+      if self.ignore_hash {
+        mod_data_clone.config.expected_iso_hash = None;
+        mod_data_clone.config.expected_dol_hash = None;
+      }
     }
+
     // Spawn a new thread to handle the patching
+    let ctx_clone = ctx.clone();
+    let path_clone = path.clone();
+    let progress_tx = self.progress_tx.clone();
+    let mod_data_tx = self.mod_data_tx.clone();
     thread::spawn(move || {
       info!("Starting patch for file: {:?}", path_clone);
       let result = handle_patch_for_file(
         &path_clone,
-        &mod_data_clone,
-        &progress_tx,
-        || { ctx_clone.request_repaint(); },
+       &mod_data_clone,
+        |progress| {
+          let _ = progress_tx.send(progress);
+          ctx_clone.request_repaint();
+        },
       );
       match result {
         Ok(out_path) => {
-          info!("Successfully patched file: {:?}", out_path);
-          // "Done! <path>"
-          let message = format!("Done! {:?}", out_path);
-          progress_tx.send(Progress::new(1, 1, message)).ok();
-          ctx_clone.request_repaint();
+          match out_path {
+            PatchResult::Dol(path) | PatchResult::Iso(path) => {
+              info!("Patched DOL file created at: {:?}", path);
+              let message = format!("Done! {:?}", path);
+              progress_tx.send(Progress::new(1, 1, message)).ok();
+              ctx_clone.request_repaint();
+            }
+            PatchResult::ModData(mod_data) => {
+              mod_data_tx.send(mod_data).ok();
+              info!("Loaded mod data from ELF: {:?}", path_clone);
+              ctx_clone.request_repaint();
+            }
+          }
         }
         Err(e) => {
           error!("Error patching file {:?}: {} \n{}", path_clone, e, e.backtrace());
@@ -347,49 +381,67 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
   }
 }
 
+#[derive(Debug, Clone)]
+enum PatchResult {
+  Dol(PathBuf),
+  Iso(PathBuf),
+  ModData(ModData),
+}
+
 fn handle_patch_for_file<F>(
   path: &PathBuf,
-  mod_data: &ModData,
-  progress_tx: &Sender<Progress>,
-  request_ui_update: F,
-) -> Result<PathBuf> where
-  F: Fn(),
+  mod_data: &Option<ModData>,
+  progres_fn: F,
+) -> Result<PatchResult> where
+  F: Fn(Progress),
 {
-  if let Some(ext) = path.extension() {
-    if ext == "dol" {
-      info!("Patching DOL file: {:?}", path);
-      let out_path = mod_data.config.output_path_override.clone()
-        .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_dol));
-      patch_dol_file(
-        |new_progress| {
-          let _ = progress_tx.send(new_progress);
-          request_ui_update();
-        },
-        path,
-        &out_path,
-        &mod_data,
-      )?;
-      Ok(out_path)
-    } else if ext == "iso" || ext == "gcm" {
-      info!("Patching ISO file: {:?}", path);
-      let out_path = mod_data.config.output_path_override.clone()
-        .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_iso));
-      patch_iso_file(
-        |new_progress| {
-          let _ = progress_tx.send(new_progress);
-          request_ui_update();
-        },
-        path,
-        &out_path,
-        mod_data,
-      )?;
-      Ok(out_path)
-    } else {
-      error!("Unsupported file type: {:?}", path);
-      Err(anyhow::anyhow!("Unsupported file type: {:?}", ext))
-    }
+  let ext = path.extension()
+    .and_then(|s| s.to_str())
+    .map(|s| s.to_lowercase());
+  if ext == Some("dol".to_string()) {
+    info!("Patching DOL file: {:?}", path);
+    let Some(mod_data) = mod_data else {
+      return Err(anyhow::anyhow!("No mod data loaded to patch DOL"));
+    };
+    let out_path = mod_data.config.output_path_override.clone()
+      .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_dol));
+    patch_dol_file(
+      progres_fn,
+      path,
+      &out_path,
+      &mod_data,
+    )?;
+    Ok(PatchResult::Dol(out_path))
+  } else if ext == Some("iso".to_string()) || ext == Some("gcm".to_string()) {
+    let Some(mod_data) = mod_data else {
+      return Err(anyhow::anyhow!("No mod data loaded to patch DOL"));
+    };
+    info!("Patching ISO file: {:?}", path);
+    let out_path = mod_data.config.output_path_override.clone()
+      .unwrap_or_else(|| path.with_file_name(&mod_data.config.output_name_iso));
+    patch_iso_file(
+      progres_fn,
+      path,
+      &out_path,
+      mod_data,
+    )?;
+    Ok(PatchResult::Iso(out_path))
   } else {
-    error!("No file extension found for: {:?}", path);
-    Err(anyhow::anyhow!("No file extension found"))
+    // check if it's an .elf
+    const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
+    // read the first 4 bytes of the file
+    let mut magic = [0u8; 4];
+    {
+      let mut file = fs::File::open(path)?;
+      file.read_exact(&mut magic)?;
+    }
+    if magic == ELF_MAGIC {
+      let mod_data = load_mod_data(path.clone())?;
+      info!("Loaded mod data from ELF: {:?}", path);
+      return Ok(PatchResult::ModData(mod_data));
+    }
+
+    error!("Unsupported file type: {:?}", path);
+    Err(anyhow::anyhow!("Unsupported file type: {:?}", ext))
   }
 }

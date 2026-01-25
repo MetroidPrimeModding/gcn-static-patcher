@@ -124,22 +124,28 @@ impl BinStreamWritable for DolHeader {
     &self,
     stream: &mut T,
   ) -> std::io::Result<()> {
-    for seg in &self.text {
+    for i in 0..7 {
+      let seg = &self.text[i];
       stream.write_u32(seg.offset)?;
     }
-    for seg in &self.data {
+    for i in 0..11 {
+      let seg = &self.data[i];
       stream.write_u32(seg.offset)?;
     }
-    for seg in &self.text {
+    for i in 0..7 {
+      let seg = &self.text[i];
       stream.write_u32(seg.loading)?;
     }
-    for seg in &self.data {
+    for i in 0..11 {
+      let seg = &self.data[i];
       stream.write_u32(seg.loading)?;
     }
-    for seg in &self.text {
+    for i in 0..7 {
+      let seg = &self.text[i];
       stream.write_u32(seg.size)?;
     }
-    for seg in &self.data {
+    for i in 0..11 {
+      let seg = &self.data[i];
       stream.write_u32(seg.size)?;
     }
     stream.write_u32(self.bss_addr)?;

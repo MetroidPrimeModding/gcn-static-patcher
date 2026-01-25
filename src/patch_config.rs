@@ -35,11 +35,15 @@ pub struct ModConfig {
   /// List of additional branch patches to apply
   #[serde(default)]
   pub branch_patches: Vec<PatchBranchConfig>,
-
+  /// List of FST files to truncate
+  #[serde(default)]
+  pub truncate_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchBranchConfig {
   pub branch_from_symbol: String,
   pub to_symbol: String,
+  #[serde(default)]
+  pub link: bool,
 }

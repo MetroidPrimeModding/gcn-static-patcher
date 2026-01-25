@@ -62,35 +62,41 @@ pub fn patch_iso_file<F>(
   }
 
   let mut input_reader = Cursor::new(&input_file_mmap[..]);
-  let mut header = GCDiscHeader::read_from_stream(&mut input_reader)?;
-  info!("Disk name: {}", header.name_string());
+  let mut disc_header = GCDiscHeader::read_from_stream(&mut input_reader)?;
+  info!("Disk name: {}", disc_header.name_string());
 
-  input_reader.seek(SeekFrom::Start(header.fst_offset as u64))?;
+  input_reader.seek(SeekFrom::Start(disc_header.fst_offset as u64))?;
   let mut fst = FST::read_from_stream(&mut input_reader)?;
   info!("FST contains {} entries", fst.root.count());
 
   // print("Removing Video/Attract02_32.thp to make room for mod")
   // attract = fst.find(["Video", "Attract02_32.thp"])
   // attract.length = 0
-  info!("Removing Video/Attract02_32.thp to make room for mod");
-  if let Some(FSTEntry::File { length, .. }) = fst.root.find_mut(&["<root>", "Video", "Attract02_32.thp"]) {
-    *length = 0;
-  } else {
-    info!("Warning: Could not find Video/Attract02_32.thp in FST");
-    info!("FST: {:?}", fst);
+  for file in &mod_data.config.truncate_files {
+    info!("Truncating {} to make room for mod", file);
+    let mut split = file.split('/').collect::<Vec<&str>>();
+    split.insert(0, "<root>");
+    if let Some(FSTEntry::File { length, .. }) = fst.root.find_mut(&split) {
+      *length = 0;
+    } else {
+      info!("Warning: Could not find {} in FST", file);
+    }
   }
 
   info!("Extracting dol...");
-  let dol_header_bytes = &input_file_mmap[header.dol_offset as usize..(header.dol_offset + 0x100) as usize];
+  let dol_header_bytes = &input_file_mmap[disc_header.dol_offset as usize..(disc_header.dol_offset + 0x100) as usize];
   let dol_header = DolHeader::read_from_stream(&mut Cursor::new(dol_header_bytes))?;
   let dol_length = dol_header.total_length();
-  let unpatched_dol_bytes = &input_file_mmap[header.dol_offset as usize..(header.dol_offset + dol_length) as usize];
+  let unpatched_dol_bytes = &input_file_mmap[disc_header.dol_offset as usize..(disc_header.dol_offset + dol_length) as usize];
 
   info!("Patching dol...");
   let patched_dol_bytes = patch_dol(&mod_data, unpatched_dol_bytes)?;
 
   info!("Finding a suitable gap...");
-  let file_ranges = fst.root.get_ranges();
+  let mut file_ranges = fst.root.get_ranges();
+  // add the first gap (before user area)
+  file_ranges.insert(0, (0, disc_header.user_pos));
+
   let gaps = convert_ranges_to_gaps(&file_ranges);
   let search_size = patched_dol_bytes.len() as u32 + 8192; // extra padding
   let mut chosen_gap: Option<(u32, u32)> = None;
@@ -107,9 +113,9 @@ pub fn patch_iso_file<F>(
   let chosen_gap = chosen_gap.unwrap();
   info!("Chosen gap: {:?}", chosen_gap);
 
-  let mod_dol_offset = chosen_gap.0 - patched_dol_bytes.len() as u32;
+  let mod_dol_offset = chosen_gap.1 - patched_dol_bytes.len() as u32;
   let mod_dol_offset = mod_dol_offset - (mod_dol_offset % 8192);
-  info!("Mod DOL offset in ISO: 0x{:08X}", mod_dol_offset);
+  info!("Mod DOL offset in ISO: {}", mod_dol_offset);
 
   info!("Patching FST...");
   fst.root.add_child(FSTEntry::File {
@@ -150,19 +156,19 @@ pub fn patch_iso_file<F>(
     fst.write_to_stream(&mut Cursor::new(&mut fst_bytes_vec))?;
     fst_bytes_vec
   };
-  let fst_offset = header.fst_offset as usize;
+  let fst_offset = disc_header.fst_offset as usize;
   let fst_size = fst_bytes.len();
   output_file_mmap[fst_offset..fst_offset + fst_size].copy_from_slice(&fst_bytes);
 
   info!("Patching header...");
   // write new string to the start of the game name
-  Cursor::new(&mut header.game_name[..])
+  Cursor::new(&mut disc_header.game_name[..])
     .write_string(&mod_data.config.game_name)?;
-  header.dol_offset = mod_dol_offset;
-  header.fst_offset = fst_offset as u32; // didn't actually move, but to be safe
-  header.fst_size = fst_size as u32;
-  header.fst_max_size = fst_size as u32;
-  header.write_to_stream(&mut Cursor::new(&mut output_file_mmap[..]))?;
+  disc_header.dol_offset = mod_dol_offset;
+  disc_header.fst_offset = fst_offset as u32; // didn't actually move, but to be safe
+  disc_header.fst_size = fst_size as u32;
+  disc_header.fst_max_size = fst_size as u32;
+  disc_header.write_to_stream(&mut Cursor::new(&mut output_file_mmap[..]))?;
 
   info!("Writing patched dol...");
   let dol_offset = mod_dol_offset as usize;
@@ -175,7 +181,7 @@ pub fn patch_iso_file<F>(
     let bnr_path = std::env::current_dir()?
       .join(bnr_name);
     let bnr_bytes = fs::read(bnr_path)?;
-    let bnr_offset = header.user_pos as usize;
+    let bnr_offset = disc_header.user_pos as usize;
     output_file_mmap[bnr_offset..bnr_offset + bnr_bytes.len()]
       .copy_from_slice(&bnr_bytes);
   }

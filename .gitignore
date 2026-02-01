@@ -8,3 +8,4 @@ mod.elf
 .DS_Store
 # kept in my local copy for reference
 /python
+*.local.sh

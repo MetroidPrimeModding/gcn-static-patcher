@@ -151,7 +151,7 @@ pub fn patch_dol(
   info!("New DOL Header: {:?}", new_dol_header);
 
   let mut arenalo_upper = ((link_end >> 16) & 0xFFFF) as u16;
-  let mut arenalo_lower = (link_end & 0xFFFF) as u16;
+  let arenalo_lower = (link_end & 0xFFFF) as u16;
 
   // adjust for sign extension
   if arenalo_lower & 0x8000 != 0 {
@@ -159,16 +159,16 @@ pub fn patch_dol(
   }
 
   info!("Patching areana lo to 0x{:08X}",  link_end);
-  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_1 as u32, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_1 as u32, |_| {
     build_lis(3, arenalo_upper)
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_1 as u32 + 4, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_1 as u32 + 4, |_| {
     build_addi(3, 3, arenalo_lower)
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32, |_| {
     build_lis(3, arenalo_upper)
   })?;
-  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32 + 4, |x| {
+  patch_dol_addr_32(&dol_header, &mut output_bytes, patch_arena_lo_2 as u32 + 4, |_| {
     build_addi(3, 3, arenalo_lower)
   })?;
   info!("Patching entry hook at 0x{:08X} to jump to 0x{:08X}", entry_hook_addr, entry_addr);

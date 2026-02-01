@@ -8,6 +8,7 @@ use clap::Parser;
 use eframe;
 use eframe::egui;
 use log::{error, info};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -25,7 +26,9 @@ use gcn_static_patcher::{
 
 fn main() -> Result<()> {
   // Initialize logging
-  let log_file_path = find_app_dir().join("patcher.log");
+  let log_dir = log_dir();
+  fs::create_dir_all(&log_dir)?;
+  let log_file_path = log_dir.join("patcher.log");
   println!("Log file path: {:?}", log_file_path);
   fern::Dispatch::new()
     .format(|out, message, record| {
@@ -62,6 +65,42 @@ fn main() -> Result<()> {
   }
 
   Ok(())
+}
+
+fn log_dir() -> PathBuf {
+  const APP_FOLDER_NAME: &str = "GCN Static Patcher";
+
+  #[cfg(target_os = "macos")]
+  {
+    if let Some(home) = std::env::var_os("HOME") {
+      return PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join(APP_FOLDER_NAME);
+    }
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+      return PathBuf::from(appdata).join(APP_FOLDER_NAME);
+    }
+    if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+      return PathBuf::from(local_appdata).join(APP_FOLDER_NAME);
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    if let Some(home) = std::env::var_os("HOME") {
+      return PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join(APP_FOLDER_NAME);
+    }
+  }
+
+  find_app_dir()
 }
 
 fn run_gui(args: Args, mod_data: Option<ModData>) -> Result<()> {

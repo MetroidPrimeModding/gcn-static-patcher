@@ -37,6 +37,8 @@ echo "Creating .app bundle..."
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+
+rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$UNIVERSAL_BIN" "$APP_MACOS/$BINARY_NAME"
 
@@ -66,6 +68,7 @@ cat > "$INFO_PLIST" <<EOF
 </plist>
 EOF
 
+codesign -d -r- "$APP_BUNDLE" || true
 
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 if [[ -z "$CODESIGN_IDENTITY" ]]; then
@@ -75,6 +78,8 @@ fi
 
 echo "Signing .app bundle..."
 codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+
+codesign -d -r- "$APP_BUNDLE" || true
 
 ZIP_PATH="$OUTPUT_DIR/${BINARY_NAME}.zip"
 echo "Creating notarization zip at $ZIP_PATH..."

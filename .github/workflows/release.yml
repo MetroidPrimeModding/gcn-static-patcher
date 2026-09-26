@@ -1,0 +1,71 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            ext: .exe
+            archive: gcn-static-patcher-windows.zip
+          - os: ubuntu-24.04
+            ext: ''
+            archive: gcn-static-patcher-linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            ext: ''
+            archive: gcn-static-patcher-linux-arm64.tar.gz
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      # Windows: pwsh + Compress-Archive. Not `tar` under bash — Git-for-Windows bash may
+      # shadow System32's bsdtar with GNU tar, which cannot write a real zip.
+      - name: Create release archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory gcn-static-patcher | Out-Null
+          Copy-Item "target/release/gcn-static-patcher-cli${{ matrix.ext }}" gcn-static-patcher/
+          Copy-Item "target/release/gcn-static-patcher-gui${{ matrix.ext }}" gcn-static-patcher/
+          Compress-Archive -Path gcn-static-patcher -DestinationPath "${{ matrix.archive }}"
+
+      - name: Create release archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bashSNESEmulatorFrame::SetMode
+        run: |
+          mkdir gcn-static-patcher
+          cp target/release/gcn-static-patcher-cli target/release/gcn-static-patcher-gui gcn-static-patcher/
+          tar -czf "${{ matrix.archive }}" gcn-static-patcher
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcn-static-patcher-${{ matrix.os }}
+          path: gcn-static-patcher/**
+          if-no-files-found: error
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.archive }}
+          fail_on_unmatched_files: true
+          body: Automated release build

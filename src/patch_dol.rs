@@ -95,6 +95,10 @@ pub fn patch_dol(
     .address();
 
   let mut output_bytes = dol_bytes.to_vec();
+  let original_segments: Vec<_> = dol_header.text.iter().chain(dol_header.data.iter())
+    .filter(|s| s.offset != 0 && s.size != 0)
+    .cloned()
+    .collect();
 
   for segment in mod_file.segments() {
     // find the sections that are part of this segment
@@ -114,6 +118,35 @@ pub fn patch_dol(
     info!("  Data size: {} bytes", data.len());
     if data.is_empty() {
       info!("  Skipping empty segment");
+      continue;
+    }
+
+    // Segments inside the DOL's own text/data (e.g. unused game code the mod overwrites) are written in place, so
+    // they need no free slot and load with the section they're in.
+    let seg_start = segment.address() as u32;
+    let seg_end = seg_start + segment.size() as u32;
+    let mut in_place = false;
+    for dol_segment in original_segments.iter() {
+      let dol_end = dol_segment.loading + dol_segment.size;
+      if seg_start >= dol_end || seg_end <= dol_segment.loading {
+        continue;
+      }
+      if seg_start < dol_segment.loading || seg_end > dol_end {
+        return Err(anyhow::anyhow!(
+          "Mod segment 0x{:08X}-0x{:08X} partially overlaps DOL segment 0x{:08X}-0x{:08X}",
+          seg_start, seg_end, dol_segment.loading, dol_end));
+      }
+      if data.len() as u64 != segment.size() {
+        return Err(anyhow::anyhow!(
+          "Mod segment at 0x{:08X} overwrites a DOL segment but has uninitialized (bss) data", seg_start));
+      }
+      let offset = (dol_segment.offset + seg_start - dol_segment.loading) as usize;
+      output_bytes[offset..offset + data.len()].copy_from_slice(&data);
+      info!("  Overwrote existing DOL segment data at output offset 0x{:08X}", offset);
+      in_place = true;
+      break;
+    }
+    if in_place {
       continue;
     }
 

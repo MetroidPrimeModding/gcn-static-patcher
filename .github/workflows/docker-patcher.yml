@@ -44,14 +44,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download linux/amd64 artifact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v24
         with:
           run_id: ${{ github.event.workflow_run.id }}
           name: gcn-static-patcher-ubuntu-24.04
           path: artifacts/ubuntu-24.04
 
       - name: Download linux/arm64 artifact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v24
         with:
           run_id: ${{ github.event.workflow_run.id }}
           name: gcn-static-patcher-ubuntu-24.04-arm

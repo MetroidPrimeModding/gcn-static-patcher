@@ -26,7 +26,7 @@ jobs:
         run: cargo build --release
 
       - name: Archive binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gcn-static-patcher-${{ matrix.os }}
           path: target/release/gcn-static-patcher*

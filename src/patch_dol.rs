@@ -3,7 +3,7 @@ use crate::dol::DolHeader;
 use crate::patch_config::ModData;
 use crate::progress::Progress;
 use anyhow::Result;
-use log::info;
+use log::{info, warn};
 use md5::Digest;
 use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 use std::fs;
@@ -119,6 +119,12 @@ pub fn patch_dol(
 
     // Games that reboot (OSResetSystem) reload the DOL through DI, which can only address the disc in
     // 4-byte units, so an unaligned offset loads the segment shifted. Use 32 to match standard DOL layout.
+    // The same DI reads round the destination address and length down to 32 bytes, which the offset can't fix.
+    if segment.address() % 32 != 0 || segment.size() % 32 != 0 {
+      warn!("  Segment at 0x{:08X} (size 0x{:X}) is not 32-byte aligned; it will load incorrectly when the game \
+             reboots (e.g. OSResetSystem) or on loaders that use the real apploader",
+            segment.address(), segment.size());
+    }
     let segment_output_offset = output_bytes.len().next_multiple_of(32);
     output_bytes.resize(segment_output_offset, 0);
     output_bytes.extend_from_slice(&data);

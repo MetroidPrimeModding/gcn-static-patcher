@@ -117,7 +117,10 @@ pub fn patch_dol(
       continue;
     }
 
-    let segment_output_offset = output_bytes.len();
+    // Games that reboot (OSResetSystem) reload the DOL through DI, which can only address the disc in
+    // 4-byte units, so an unaligned offset loads the segment shifted. Use 32 to match standard DOL layout.
+    let segment_output_offset = output_bytes.len().next_multiple_of(32);
+    output_bytes.resize(segment_output_offset, 0);
     output_bytes.extend_from_slice(&data);
     info!("  Wrote segment data at output offset 0x{:08X}", segment_output_offset);
 

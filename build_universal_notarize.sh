@@ -11,7 +11,23 @@ cd "$PROJECT_ROOT"
 
 BINARY_NAME="${BINARY_NAME:-gcn-static-patcher-gui}"
 OUTPUT_DIR="${OUTPUT_DIR:-target/macos-release}"
-BUNDLE_ID="${BUNDLE_ID:-com.example.${BINARY_NAME}}"
+BUNDLE_ID="${BUNDLE_ID:-com.pwootage.${BINARY_NAME}}"
+VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+if [[ -z "$CODESIGN_IDENTITY" ]]; then
+  echo "Set CODESIGN_IDENTITY to your Developer ID Application certificate name." >&2
+  exit 1
+fi
+
+if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+  NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
+elif [[ -n "${APPLE_ID:-}" && -n "${TEAM_ID:-}" && -n "${APP_SPECIFIC_PASSWORD:-}" ]]; then
+  NOTARY_AUTH=(--apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_SPECIFIC_PASSWORD")
+else
+  echo "Set NOTARY_PROFILE (recommended) or APPLE_ID, TEAM_ID, and APP_SPECIFIC_PASSWORD." >&2
+  exit 1
+fi
 
 X86_TARGET="x86_64-apple-darwin"
 ARM_TARGET="aarch64-apple-darwin"
@@ -55,58 +71,51 @@ cat > "$INFO_PLIST" <<EOF
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>${BINARY_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
-    <string>18.0</string>
+    <string>15.0</string>
   </dict>
 </plist>
 EOF
 
-codesign -d -r- "$APP_BUNDLE" || true
-
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
-if [[ -z "$CODESIGN_IDENTITY" ]]; then
-  echo "Set CODESIGN_IDENTITY to your Developer ID Application certificate name." >&2
-  exit 1
-fi
-
 echo "Signing .app bundle..."
 codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
-codesign -d -r- "$APP_BUNDLE" || true
-
-ZIP_PATH="$OUTPUT_DIR/${BINARY_NAME}.zip"
-echo "Creating notarization zip at $ZIP_PATH..."
-/usr/bin/ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+# notarytool only uploads this; the distributable zip is rebuilt after stapling below.
+SUBMIT_ZIP="$OUTPUT_DIR/${BINARY_NAME}-notarize.zip"
+rm -f "$SUBMIT_ZIP"
+/usr/bin/ditto -c -k --keepParent "$APP_BUNDLE" "$SUBMIT_ZIP"
 
 echo "Submitting for notarization..."
-if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-  xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
-else
-  APPLE_ID="${APPLE_ID:-}"
-  TEAM_ID="${TEAM_ID:-}"
-  APP_SPECIFIC_PASSWORD="${APP_SPECIFIC_PASSWORD:-}"
-  if [[ -z "$APPLE_ID" || -z "$TEAM_ID" || -z "$APP_SPECIFIC_PASSWORD" ]]; then
-    echo "Set NOTARY_PROFILE (recommended) or APPLE_ID, TEAM_ID, and APP_SPECIFIC_PASSWORD." >&2
-    exit 1
-  fi
-  xcrun notarytool submit "$ZIP_PATH" \
-    --apple-id "$APPLE_ID" \
-    --team-id "$TEAM_ID" \
-    --password "$APP_SPECIFIC_PASSWORD" \
-    --wait
+# `submit --wait` exits 0 even when Apple rejects the upload, so check the status ourselves.
+SUBMIT_RESULT="$(xcrun notarytool submit "$SUBMIT_ZIP" "${NOTARY_AUTH[@]}" --wait --output-format json)"
+SUBMISSION_ID="$(plutil -extract id raw - <<<"$SUBMIT_RESULT")"
+SUBMISSION_STATUS="$(plutil -extract status raw - <<<"$SUBMIT_RESULT")"
+rm -f "$SUBMIT_ZIP"
+
+if [[ "$SUBMISSION_STATUS" != "Accepted" ]]; then
+  echo "Notarization failed with status '$SUBMISSION_STATUS'. Log:" >&2
+  xcrun notarytool log "$SUBMISSION_ID" "${NOTARY_AUTH[@]}" >&2 || true
+  exit 1
 fi
 
 echo "Stapling notarization ticket..."
 xcrun stapler staple "$APP_BUNDLE"
+xcrun stapler validate "$APP_BUNDLE"
 
 echo "Verifying assessment..."
 spctl --assess --type execute --verbose "$APP_BUNDLE"
 
-echo "Done: $APP_BUNDLE"
+ZIP_PATH="$OUTPUT_DIR/${BINARY_NAME}-macos-universal.zip"
+echo "Creating release zip at $ZIP_PATH..."
+rm -f "$ZIP_PATH"
+/usr/bin/ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+
+echo "Done: $ZIP_PATH"

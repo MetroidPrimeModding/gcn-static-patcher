@@ -50,7 +50,7 @@ jobs:
 
       - name: Create release archive (Unix)
         if: runner.os != 'Windows'
-        shell: bashSNESEmulatorFrame::SetMode
+        shell: bash
         run: |
           mkdir gcn-static-patcher
           cp target/release/gcn-static-patcher-cli target/release/gcn-static-patcher-gui gcn-static-patcher/
